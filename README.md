@@ -11,15 +11,26 @@ windows. Existing tours are **not** rearranged, only extended.
 
 ```bash
 uv sync                     # or: pip install -e .
-uv run tour-insert examples/tours.csv examples/orders.csv -o out
 uv run pytest
+
+# offline: coordinates are in the CSV
+uv run tour-insert examples/winterthur/tours.csv examples/winterthur/orders.csv -o out --map
+
+# online: only addresses, geocoded on the fly
+uv run tour-insert examples/lyon/tours.csv examples/lyon/orders.csv -o out-lyon --map
 ```
 
-Output in `out/`:
+Output folder:
 
 - `tours_new.csv`: every tour with the new stops (`is_new = 1`), planned arrival
   and departure, and slack to the time window
-- `unplaced.csv`: orders that fit into no tour, with the reason
+- `unplaced.csv`: orders that fit into no tour or could not be geocoded, with
+  the reason
+- `geocoding.csv`: every looked-up address with what was found (only when
+  something was geocoded); check it by eye
+- `map.html` (with `--map`): open in a browser. Tours as coloured lines,
+  stops numbered in driving order, new stops with a black ring, depot `D`,
+  orders that fit nowhere as a red cross. Click a stop for its times.
 
 ## Input
 
@@ -29,14 +40,31 @@ Output in `out/`:
 |---|---|
 | tour_id, seq | tour and position in the tour (sorted by seq) |
 | stop_id | unique id |
-| address, country | text; country `FR` or `CH` (for geocoding later) |
-| lat, lon | WGS84 coordinates (required until geocoding is added) |
+| address | full address with postal code, e.g. `1 Place de la Comédie, 69001 Lyon` |
+| country | `FR` or `CH`; if empty, guessed from the postal code (5 digits FR, 4 digits CH) |
+| lat, lon | WGS84 coordinates; if empty, the address is geocoded |
 | tw_start, tw_end | time window `HH:MM`, optional |
 | service_min | minutes at the stop, optional (default `--service-min`) |
 
 `orders.csv`: same columns, with `order_id` instead of `tour_id, seq, stop_id`.
 
 The first stop's `tw_start` is the start time of the tour.
+
+## Geocoding
+
+| country | service | quality check |
+|---|---|---|
+| FR | IGN Géoplateforme (BAN), `data.geopf.fr/geocodage` | score ≥ `--min-score` (default 0.5) |
+| CH | swisstopo GeoAdmin API, official building addresses | postal code of the input appears in the result |
+
+Both are free and need no key. Results are cached in `.geocode_cache.json`
+(`--geocode-cache`), so each address is looked up once.
+
+- A **tour stop** that cannot be geocoded reliably stops the run with a list
+  of the addresses: a wrong depot or customer position would make the whole
+  tour wrong.
+- A **new order** that cannot be geocoded reliably is not planned and appears
+  in `unplaced.csv` (`geocode_not_found` / `geocode_uncertain`).
 
 ## Assumptions
 
@@ -57,14 +85,20 @@ The first stop's `tw_start` is the start time of the tour.
 ## Roadmap
 
 1. ~~Core: insertion, schedule, feasibility, CLI~~
-2. Geocoding: France (IGN Geoplateforme, BAN), Switzerland (swisstopo)
-3. Map of the new tours
+2. ~~Geocoding: France (IGN Géoplateforme, BAN), Switzerland (swisstopo)~~
+3. ~~Map of the new tours~~
 4. Optional: street-network travel times (OSRM), OR-Tools, simple UI
 
 ## Example data
 
-`examples/` contains **invented** tours in Winterthur with approximate
-coordinates. No real customer data is used or stored in this repository.
+All example data is **invented**. No real customer data is used or stored in
+this repository.
+
+- `examples/winterthur/`: 2 tours, 5 orders, with approximate coordinates
+  (runs offline). Order N5 cannot be reached in time on purpose.
+- `examples/lyon/`: 2 tours, 7 orders, addresses only (needs internet).
+  Public places and squares; C6 has no country (guessed from the postal code),
+  C7 is a made-up address that must end up in `unplaced.csv`.
 
 ## Origin
 
