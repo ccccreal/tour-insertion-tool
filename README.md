@@ -110,9 +110,10 @@ this repository.
 
 - `examples/winterthur/`: 2 tours, 5 orders, with approximate coordinates
   (runs offline). Order N5 cannot be reached in time on purpose.
-- `examples/lyon/`: 2 tours, 7 orders, addresses only (needs internet).
-  Public places and squares; C6 has no country (guessed from the postal code),
-  C7 is a made-up address that must end up in `unplaced.csv`.
+- `examples/lyon/`: 2 tours, 10 orders, addresses only (needs internet).
+  Tours start at 08:00. The few time windows are deliberately generous: they
+  show the format but do not change the result. These two files are also the
+  templates offered for download in the web app.
 
 ## Origin
 

@@ -1,16 +1,16 @@
 tour_id,seq,stop_id,address,country,lat,lon,tw_start,tw_end,service_min
 NORD,0,NORD-00,"Place Charles Béraudier, 69003 Lyon",FR,,,08:00,,0
 NORD,1,NORD-01,"20 Place des Terreaux, 69001 Lyon",FR,,,,,
-NORD,2,NORD-02,"1 Place de la Comédie, 69001 Lyon",FR,,,,10:00,
+NORD,2,NORD-02,"1 Place de la Comédie, 69001 Lyon",FR,,,,11:00,
 NORD,3,NORD-03,"Place de la Croix-Rousse, 69004 Lyon",FR,,,,,
-NORD,4,NORD-04,"Place du Général Leclerc, 69006 Lyon",FR,,,09:00,11:00,
+NORD,4,NORD-04,"Place du Général Leclerc, 69006 Lyon",FR,,,08:30,12:00,
 NORD,5,NORD-05,"43 Boulevard du 11 Novembre 1918, 69100 Villeurbanne",FR,,,,,
 NORD,99,NORD-99,"Place Charles Béraudier, 69003 Lyon",FR,,,,,0
 SUD,0,SUD-00,"Place Charles Béraudier, 69003 Lyon",FR,,,08:00,,0
 SUD,1,SUD-01,"Place Bellecour, 69002 Lyon",FR,,,,,
-SUD,2,SUD-02,"Place Saint-Jean, 69005 Lyon",FR,,,,09:30,
-SUD,3,SUD-03,"86 Quai Perrache, 69002 Lyon",FR,,,,,
-SUD,4,SUD-04,"20 Place des Docks, 69007 Lyon",FR,,,,,
-SUD,5,SUD-05,"Place Jean Macé, 69007 Lyon",FR,,,,,
+SUD,2,SUD-02,"Place Saint-Jean, 69005 Lyon",FR,,,,11:00,
+SUD,3,SUD-03,"20 Place des Docks, 69007 Lyon",FR,,,,,
+SUD,4,SUD-04,"86 Quai Perrache, 69002 Lyon",FR,,,,,
+SUD,5,SUD-05,"Place Jean Macé, 69007 Lyon",FR,,,08:30,12:00,
 SUD,6,SUD-06,"Place Ambroise Courtois, 69008 Lyon",FR,,,,,
 SUD,99,SUD-99,"Place Charles Béraudier, 69003 Lyon",FR,,,,,0
