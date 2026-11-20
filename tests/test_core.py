@@ -158,7 +158,7 @@ class TestPlanner:
     def test_impossible_order_is_unplaced(self, grid):
         orders = [stop("late", 5000, 0, tw_end=485, new=True)]
         r = insert_orders(self.make_tours(), orders, grid)
-        assert [u.stop.stop_id for u in r.unplaced] == ["late"]
+        assert [u.order_id for u in r.unplaced] == ["late"]
         assert r.unplaced[0].reason == REASON_NO_POSITION
 
     def test_result_independent_of_input_order(self, grid):

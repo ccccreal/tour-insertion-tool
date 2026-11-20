@@ -7,7 +7,7 @@ orders.csv  order_id, address, country, lat, lon, tw_start, tw_end,
 
 Times are "HH:MM". Empty cells are allowed for address, country, tw_start,
 tw_end and service_min (then the default service time is used).
-lat/lon are required until geocoding is added.
+lat/lon may be empty: then the address is geocoded (see geocoding.py).
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import csv
 from collections import defaultdict
 from pathlib import Path
 
+from tour_insertion.geocoding import GeocodeResult
 from tour_insertion.model import Schedule, Stop, Tour
 from tour_insertion.planner import Unplaced
 
@@ -43,7 +44,7 @@ def _stop_from_row(row: dict[str, str], id_column: str, default_service: int,
     lat, lon = (row.get("lat") or "").strip(), (row.get("lon") or "").strip()
     if not lat or not lon:
         raise ValueError(f"{where}: stop {stop_id!r} has no lat/lon "
-                         "(geocoding is not implemented yet)")
+                         "(geocode first)")
     service = (row.get("service_min") or "").strip()
     return Stop(
         stop_id=stop_id,
@@ -58,30 +59,49 @@ def _stop_from_row(row: dict[str, str], id_column: str, default_service: int,
     )
 
 
-def read_tours(path: str | Path, default_service: int = 3) -> dict[str, Tour]:
-    """tour_id -> Tour, stops sorted by seq."""
-    rows: dict[str, list[tuple[int, Stop]]] = defaultdict(list)
+def read_rows(path: str | Path) -> list[dict[str, str]]:
+    """All rows of a CSV as dicts (BOM-safe). Adds '_where' for messages."""
     with open(path, newline="", encoding="utf-8-sig") as f:
-        for i, row in enumerate(csv.DictReader(f), start=2):
-            where = f"{path}:{i}"
-            tour_id = (row.get("tour_id") or "").strip()
-            if not tour_id:
-                raise ValueError(f"{where}: missing tour_id")
-            seq = int(row["seq"])
-            stop = _stop_from_row(row, "stop_id", default_service, False, where)
-            rows[tour_id].append((seq, stop))
+        rows = list(csv.DictReader(f))
+    for i, row in enumerate(rows, start=2):
+        row["_where"] = f"{path}:{i}"
+    return rows
+
+
+def tours_from_rows(rows: list[dict[str, str]],
+                    default_service: int = 3) -> dict[str, Tour]:
+    """tour_id -> Tour, stops sorted by seq."""
+    grouped: dict[str, list[tuple[int, Stop]]] = defaultdict(list)
+    for row in rows:
+        where = row.get("_where", "tours")
+        tour_id = (row.get("tour_id") or "").strip()
+        if not tour_id:
+            raise ValueError(f"{where}: missing tour_id")
+        seq = int(row["seq"])
+        stop = _stop_from_row(row, "stop_id", default_service, False, where)
+        grouped[tour_id].append((seq, stop))
     tours = {}
-    for tour_id, items in rows.items():
+    for tour_id, items in grouped.items():
         items.sort(key=lambda item: item[0])
         tours[tour_id] = Tour(tour_id, tuple(stop for _, stop in items))
     return tours
 
 
+def orders_from_rows(rows: list[dict[str, str]],
+                     default_service: int = 3) -> list[Stop]:
+    return [_stop_from_row(row, "order_id", default_service, True,
+                           row.get("_where", "orders"))
+            for row in rows]
+
+
+def read_tours(path: str | Path, default_service: int = 3) -> dict[str, Tour]:
+    """Tours from a CSV that already has lat/lon for every stop."""
+    return tours_from_rows(read_rows(path), default_service)
+
+
 def read_orders(path: str | Path, default_service: int = 3) -> list[Stop]:
-    with open(path, newline="", encoding="utf-8-sig") as f:
-        return [_stop_from_row(row, "order_id", default_service, True,
-                               f"{path}:{i}")
-                for i, row in enumerate(csv.DictReader(f), start=2)]
+    """Orders from a CSV that already has lat/lon for every order."""
+    return orders_from_rows(read_rows(path), default_service)
 
 
 TOUR_COLUMNS = ["tour_id", "seq", "stop_id", "is_new", "address", "country",
@@ -114,6 +134,18 @@ def write_unplaced(path: str | Path, unplaced: list[Unplaced]) -> None:
         writer = csv.writer(f)
         writer.writerow(["order_id", "address", "tw_start", "tw_end", "reason"])
         for u in unplaced:
-            writer.writerow([u.stop.stop_id, u.stop.address,
-                             format_time(u.stop.tw_start),
-                             format_time(u.stop.tw_end), u.reason])
+            writer.writerow([u.order_id, u.address, format_time(u.tw_start),
+                             format_time(u.tw_end), u.reason])
+
+
+def write_geocoding(path: str | Path, results: list[GeocodeResult]) -> None:
+    """One row per looked-up address, to check the geocoding by eye."""
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["address", "country", "status", "score", "found",
+                         "lat", "lon"])
+        for r in results:
+            writer.writerow([r.query, r.country, r.status,
+                             "" if r.score is None else round(r.score, 3),
+                             r.label, "" if r.lat is None else r.lat,
+                             "" if r.lon is None else r.lon])
