@@ -32,6 +32,19 @@ Output folder:
   stops numbered in driving order, new stops with a black ring, depot `D`,
   orders that fit nowhere as a red cross. Click a stop for its times.
 
+## Web app
+
+For dispatchers who do not want to use a terminal: upload the two CSV files,
+see the map, download the result. Languages: German, French, English.
+
+```bash
+uv sync --extra app
+uv run streamlit run app.py      # opens http://localhost:8501
+```
+
+Default values per customer/city live in `profiles.json`. The same `app.py`
+runs on Streamlit Community Cloud (it uses `requirements.txt`).
+
 ## Input
 
 `tours.csv`
@@ -87,7 +100,8 @@ Both are free and need no key. Results are cached in `.geocode_cache.json`
 1. ~~Core: insertion, schedule, feasibility, CLI~~
 2. ~~Geocoding: France (IGN Géoplateforme, BAN), Switzerland (swisstopo)~~
 3. ~~Map of the new tours~~
-4. Optional: street-network travel times (OSRM), OR-Tools, simple UI
+4. ~~Web app (Streamlit)~~
+5. Optional: street-network travel times (OSRM), reordering existing stops
 
 ## Example data
 

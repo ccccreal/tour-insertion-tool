@@ -7,6 +7,9 @@ license = "MIT"
 requires-python = ">=3.10"
 dependencies = ["folium>=0.17"]
 
+[project.optional-dependencies]
+app = ["streamlit>=1.45"]
+
 [project.scripts]
 tour-insert = "tour_insertion.cli:main"
 

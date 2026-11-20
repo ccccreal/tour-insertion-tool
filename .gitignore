@@ -6,6 +6,7 @@ __pycache__/
 build/
 dist/
 out/
+out*/
 .DS_Store
 # never commit real customer data
 data/

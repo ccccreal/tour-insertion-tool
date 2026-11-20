@@ -1,0 +1,30 @@
+{
+  "_comment": "Default settings per customer/city. All numbers are assumptions unless stated otherwise. speed in m/min (250 = 15 km/h).",
+  "Standard": {
+    "speed_m_per_min": 250,
+    "detour_factor": 1.35,
+    "service_min": 3,
+    "tolerance_min": 0,
+    "open_start": false,
+    "open_end": false,
+    "min_score": 0.5
+  },
+  "Lyon (FR)": {
+    "speed_m_per_min": 250,
+    "detour_factor": 1.35,
+    "service_min": 3,
+    "tolerance_min": 0,
+    "open_start": false,
+    "open_end": false,
+    "min_score": 0.5
+  },
+  "Winterthur (CH)": {
+    "speed_m_per_min": 250,
+    "detour_factor": 1.35,
+    "service_min": 3,
+    "tolerance_min": 0,
+    "open_start": false,
+    "open_end": false,
+    "min_score": 0.5
+  }
+}
