@@ -123,6 +123,12 @@ def _legend(title: str) -> str:
         "</div>")
 
 
+def map_html(schedules: list[Schedule], unplaced: list[Unplaced] = (),
+             title: str = "Tours") -> str:
+    """The map as one self-contained HTML page."""
+    return build_map(schedules, unplaced, title).get_root().render()
+
+
 def write_map(path: str | Path, schedules: list[Schedule],
               unplaced: list[Unplaced] = (), title: str = "Tours") -> None:
-    build_map(schedules, unplaced, title).save(str(path))
+    Path(path).write_text(map_html(schedules, unplaced, title), encoding="utf-8")

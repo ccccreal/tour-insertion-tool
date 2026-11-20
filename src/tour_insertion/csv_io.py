@@ -13,8 +13,10 @@ lat/lon may be empty: then the address is geocoded (see geocoding.py).
 from __future__ import annotations
 
 import csv
+import io
 from collections import defaultdict
 from pathlib import Path
+from typing import IO
 
 from tour_insertion.geocoding import GeocodeResult
 from tour_insertion.model import Schedule, Stop, Tour
@@ -59,13 +61,27 @@ def _stop_from_row(row: dict[str, str], id_column: str, default_service: int,
     )
 
 
-def read_rows(path: str | Path) -> list[dict[str, str]]:
-    """All rows of a CSV as dicts (BOM-safe). Adds '_where' for messages."""
-    with open(path, newline="", encoding="utf-8-sig") as f:
-        rows = list(csv.DictReader(f))
+def read_rows(source: str | Path | IO[str], name: str | None = None
+              ) -> list[dict[str, str]]:
+    """All rows of a CSV as dicts. `source` is a path or an open text file.
+
+    Adds '_where' (file:line) to every row for error messages.
+    """
+    if hasattr(source, "read"):
+        rows = list(csv.DictReader(source))
+        name = name or "upload"
+    else:
+        with open(source, newline="", encoding="utf-8-sig") as f:
+            rows = list(csv.DictReader(f))
+        name = name or str(source)
     for i, row in enumerate(rows, start=2):
-        row["_where"] = f"{path}:{i}"
+        row["_where"] = f"{name}:{i}"
     return rows
+
+
+def read_rows_text(text: str, name: str = "upload") -> list[dict[str, str]]:
+    """Rows from CSV text (e.g. an uploaded file). Strips a UTF-8 BOM."""
+    return read_rows(io.StringIO(text.lstrip("\ufeff")), name)
 
 
 def tours_from_rows(rows: list[dict[str, str]],
@@ -109,43 +125,58 @@ TOUR_COLUMNS = ["tour_id", "seq", "stop_id", "is_new", "address", "country",
                 "slack_min"]
 
 
+def schedules_to_csv(schedules: list[Schedule]) -> str:
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=TOUR_COLUMNS, lineterminator="\n")
+    writer.writeheader()
+    for schedule in schedules:
+        for seq, t in enumerate(schedule.times, start=1):
+            s = t.stop
+            writer.writerow({
+                "tour_id": schedule.tour.tour_id, "seq": seq,
+                "stop_id": s.stop_id, "is_new": int(s.is_new),
+                "address": s.address, "country": s.country,
+                "lat": s.lat, "lon": s.lon,
+                "arrival": format_time(t.arrival),
+                "departure": format_time(t.departure),
+                "tw_start": format_time(s.tw_start),
+                "tw_end": format_time(s.tw_end),
+                "slack_min": "" if t.slack is None else t.slack,
+            })
+    return out.getvalue()
+
+
+def unplaced_to_csv(unplaced: list[Unplaced]) -> str:
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(["order_id", "address", "tw_start", "tw_end", "reason"])
+    for u in unplaced:
+        writer.writerow([u.order_id, u.address, format_time(u.tw_start),
+                         format_time(u.tw_end), u.reason])
+    return out.getvalue()
+
+
+def geocoding_to_csv(results: list[GeocodeResult]) -> str:
+    """One row per looked-up address, to check the geocoding by eye."""
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(["address", "country", "status", "score", "found",
+                     "lat", "lon"])
+    for r in results:
+        writer.writerow([r.query, r.country, r.status,
+                         "" if r.score is None else round(r.score, 3),
+                         r.label, "" if r.lat is None else r.lat,
+                         "" if r.lon is None else r.lon])
+    return out.getvalue()
+
+
 def write_schedules(path: str | Path, schedules: list[Schedule]) -> None:
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=TOUR_COLUMNS)
-        writer.writeheader()
-        for schedule in schedules:
-            for seq, t in enumerate(schedule.times, start=1):
-                s = t.stop
-                writer.writerow({
-                    "tour_id": schedule.tour.tour_id, "seq": seq,
-                    "stop_id": s.stop_id, "is_new": int(s.is_new),
-                    "address": s.address, "country": s.country,
-                    "lat": s.lat, "lon": s.lon,
-                    "arrival": format_time(t.arrival),
-                    "departure": format_time(t.departure),
-                    "tw_start": format_time(s.tw_start),
-                    "tw_end": format_time(s.tw_end),
-                    "slack_min": "" if t.slack is None else t.slack,
-                })
+    Path(path).write_text(schedules_to_csv(schedules), encoding="utf-8")
 
 
 def write_unplaced(path: str | Path, unplaced: list[Unplaced]) -> None:
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["order_id", "address", "tw_start", "tw_end", "reason"])
-        for u in unplaced:
-            writer.writerow([u.order_id, u.address, format_time(u.tw_start),
-                             format_time(u.tw_end), u.reason])
+    Path(path).write_text(unplaced_to_csv(unplaced), encoding="utf-8")
 
 
 def write_geocoding(path: str | Path, results: list[GeocodeResult]) -> None:
-    """One row per looked-up address, to check the geocoding by eye."""
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["address", "country", "status", "score", "found",
-                         "lat", "lon"])
-        for r in results:
-            writer.writerow([r.query, r.country, r.status,
-                             "" if r.score is None else round(r.score, 3),
-                             r.label, "" if r.lat is None else r.lat,
-                             "" if r.lon is None else r.lon])
+    Path(path).write_text(geocoding_to_csv(results), encoding="utf-8")
