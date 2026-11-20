@@ -10,7 +10,11 @@ only one case: put the new stop x into a gap between two existing stops.
     delta = c(s_{p-1}, x) + c(x, s_p) - c(s_{p-1}, s_p) + service(x)
 
 At the open ends one term drops out (no predecessor or no successor).
-`c` is travel time in whole minutes. Waiting time does not count.
+`c` is the EXACT (unrounded) travel time in minutes. Rounding each leg up to
+whole minutes made different gaps look equally expensive and the tie-break
+then picked the wrong one (found 20.11.2026 with the Lyon example).
+The schedule and the feasibility check still use whole minutes.
+Waiting time does not count.
 
 Which gaps are allowed
 ----------------------
@@ -41,20 +45,20 @@ def allowed_positions(n: int, fixed_first: bool = True,
 
 
 def insertion_cost(tour: Tour, stop: Stop, position: int,
-                   model: TravelModel) -> int:
+                   model: TravelModel) -> float:
     """delta for putting `stop` before tour.stops[position]."""
     n = len(tour)
     if not 0 <= position <= n:
         raise IndexError(f"position {position} outside 0..{n}")
     prev = tour.stops[position - 1] if position > 0 else None
     nxt = tour.stops[position] if position < n else None
-    cost = stop.service_min
+    cost = float(stop.service_min)
     if prev is not None:
-        cost += model.travel_min(prev.point, stop.point)
+        cost += model.travel_exact(prev.point, stop.point)
     if nxt is not None:
-        cost += model.travel_min(stop.point, nxt.point)
+        cost += model.travel_exact(stop.point, nxt.point)
     if prev is not None and nxt is not None:
-        cost -= model.travel_min(prev.point, nxt.point)
+        cost -= model.travel_exact(prev.point, nxt.point)
     return cost
 
 

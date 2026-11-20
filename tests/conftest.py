@@ -15,11 +15,13 @@ from tour_insertion.model import Stop, Tour
 
 
 class GridModel:
-    """x/y in metres, 100 m/min, rounded up to whole minutes."""
+    """x/y in metres, 100 m/min. Schedule: rounded up to whole minutes."""
+
+    def travel_exact(self, a, b) -> float:
+        return math.hypot(b[0] - a[0], b[1] - a[1]) / 100
 
     def travel_min(self, a, b) -> int:
-        d = math.hypot(b[0] - a[0], b[1] - a[1])
-        return math.ceil(d / 100 - 1e-9)
+        return math.ceil(self.travel_exact(a, b) - 1e-9)
 
 
 def stop(stop_id, x, y, tw_start=None, tw_end=None, service=0, new=False):

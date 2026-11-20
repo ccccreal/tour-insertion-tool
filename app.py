@@ -223,7 +223,7 @@ def show_result(result) -> None:
     with left:
         st.subheader(t("inserted"))
         st.dataframe([{t("col_order"): o.stop_id, t("col_tour"): o.tour_id,
-                       t("col_pos"): o.position, t("col_extra"): o.delta,
+                       t("col_pos"): o.position, t("col_extra"): round(o.delta, 1),
                        t("col_arrival"): format_time(arrival.get(o.stop_id))}
                       for o in sorted(result.inserted, key=lambda o: (o.tour_id, o.position))],
                      hide_index=True, width="stretch")

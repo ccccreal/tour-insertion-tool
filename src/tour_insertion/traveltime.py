@@ -29,7 +29,16 @@ SAME_LOCATION_M = 50.0
 
 
 class TravelModel(Protocol):
-    """Anything that can say how many whole minutes it takes from a to b."""
+    """Anything that can say how long it takes from a to b.
+
+    travel_exact  minutes as a float, NOT rounded. Used to COMPARE insertion
+                  positions: rounding every leg up to whole minutes creates
+                  false ties (two gaps "both 9 min" that differ by metres).
+    travel_min    whole minutes, rounded up. Used for the SCHEDULE (times
+                  shown to people).
+    """
+
+    def travel_exact(self, a: Point, b: Point) -> float: ...
 
     def travel_min(self, a: Point, b: Point) -> int: ...
 
@@ -60,12 +69,16 @@ class CrowFlyModel:
         """Driven distance in metres (not rounded)."""
         return haversine_m(a, b) * self.detour_factor
 
+    def travel_exact(self, a: Point, b: Point) -> float:
+        """Travel time in minutes, not rounded (0 at the same location)."""
+        if haversine_m(a, b) < SAME_LOCATION_M:
+            return 0.0
+        return self.distance_m(a, b) / self.speed_m_per_min
+
     def travel_min(self, a: Point, b: Point) -> int:
         """Travel time in whole minutes, rounded UP.
 
         The tiny epsilon keeps float noise (18.000000000004) from becoming
         an extra minute; real values like 18.01 still round up to 19.
         """
-        if haversine_m(a, b) < SAME_LOCATION_M:
-            return 0
-        return math.ceil(self.distance_m(a, b) / self.speed_m_per_min - 1e-9)
+        return math.ceil(self.travel_exact(a, b) - 1e-9)

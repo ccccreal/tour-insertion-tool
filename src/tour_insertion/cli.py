@@ -75,7 +75,7 @@ def main(argv: list[str] | None = None, geocoder: Geocoder | None = None) -> int
           f"(crow-fly x {args.detour_factor}, {args.speed:g} m/min)")
     for opt in result.inserted:
         print(f"  {opt.stop_id:<10} -> {opt.tour_id:<8} position {opt.position:>2}"
-              f"   +{opt.delta} min")
+              f"   +{opt.delta:.1f} min")
     for u in result.unplaced:
         print(f"  {u.order_id:<10} NOT PLACED ({u.reason})")
     for s in result.schedules:

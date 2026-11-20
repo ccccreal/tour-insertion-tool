@@ -119,14 +119,14 @@ class InsertionOption:
     """The best feasible insertion of one stop into one tour.
 
     position   index in the NEW tour where the stop sits
-    delta      extra minutes: travel detour + service of the new stop
-               (waiting time is not counted, as in the PA)
+    delta      extra minutes (float, not rounded): travel detour + service
+               of the new stop (waiting time is not counted, as in the PA)
     min_slack  smallest reserve to a time window in the new tour, or None
     """
 
     tour_id: str
     stop_id: str
     position: int
-    delta: int
+    delta: float
     min_slack: int | None
     new_tour: Tour

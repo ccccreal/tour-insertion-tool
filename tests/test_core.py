@@ -10,7 +10,7 @@ from conftest import stop
 from tour_insertion.feasibility import check
 from tour_insertion.insertion import (allowed_positions, best_insertion,
                                       insertion_cost)
-from tour_insertion.model import Tour
+from tour_insertion.model import Stop, Tour
 from tour_insertion.planner import REASON_NO_POSITION, insert_orders
 from tour_insertion.schedule import forward_pass
 from tour_insertion.traveltime import CrowFlyModel, haversine_m
@@ -93,17 +93,18 @@ class TestInsertion:
 
     def test_costs_by_hand(self, grid, square_tour):
         x = stop("X", 500, 1000, service=2, new=True)
-        # between D and A: 12 + 5 - 10 + 2 = 9
-        assert insertion_cost(square_tour, x, 1, grid) == 9
-        # between A and B:  5 + 5 - 10 + 2 = 2
-        assert insertion_cost(square_tour, x, 2, grid) == 2
-        # between B and E:  5 + 12 - 15 + 2 = 4
-        assert insertion_cost(square_tour, x, 3, grid) == 4
+        # exact minutes (not rounded), D-X = sqrt(500^2 + 1000^2) m = 11.18 min
+        # between D and A: 11.18 + 5 - 10    + 2 = 8.18
+        assert insertion_cost(square_tour, x, 1, grid) == pytest.approx(8.180, abs=1e-3)
+        # between A and B:  5    + 5 - 10    + 2 = 2
+        assert insertion_cost(square_tour, x, 2, grid) == pytest.approx(2.0)
+        # between B and E:  5 + 11.18 - 14.14 + 2 = 4.04
+        assert insertion_cost(square_tour, x, 3, grid) == pytest.approx(4.038, abs=1e-3)
 
     def test_best_is_cheapest(self, grid, square_tour):
         x = stop("X", 500, 1000, service=2, new=True)
         opt = best_insertion(square_tour, x, grid)
-        assert opt.position == 2 and opt.delta == 2
+        assert opt.position == 2 and opt.delta == pytest.approx(2.0)
         assert opt.new_tour.stop_ids == ("D", "A", "X", "B", "E")
         assert square_tour.stop_ids == ("D", "A", "B", "E")   # unchanged
 
@@ -113,7 +114,7 @@ class TestInsertion:
                                 else s for s in square_tour.stops))
         x = stop("X", 500, 1000, service=2, new=True)
         opt = best_insertion(tour, x, grid)
-        assert opt.position == 3 and opt.delta == 4
+        assert opt.position == 3 and opt.delta == pytest.approx(4.038, abs=1e-3)
 
     def test_new_stop_window_respected(self, grid, square_tour):
         x = stop("X", 500, 1000, tw_end=490, service=2, new=True)
@@ -126,6 +127,23 @@ class TestInsertion:
         open_opt = best_insertion(square_tour, x, grid,
                                   fixed_first=False, fixed_last=False)
         assert open_opt.position in (0, 4)
+
+    def test_no_false_tie_from_rounding(self):
+        """Regression, Lyon example 20.11.2026 (coordinates read off the map).
+
+        Rounded to whole minutes, Rockefeller costs 9 min both before and
+        after Ambroise Courtois; the tie-break took the earlier gap and the
+        next order (Rue de la Balme) then got a 13-min detour. With exact
+        times the later gap is (slightly) cheaper and the tour becomes
+        Jean Mace -> Courtois -> Rockefeller -> Balme -> depot.
+        """
+        def s(i, lat, lon, new=False):
+            return Stop(i, lat, lon, is_new=new)
+        tour = Tour("SUD", (s("D0", 45.7606, 4.8597), s("JM", 45.7457, 4.8424),
+                            s("C", 45.7445, 4.8705), s("D1", 45.7606, 4.8597)))
+        orders = [s("R", 45.7405, 4.8790, True), s("B", 45.7505, 4.8915, True)]
+        r = insert_orders({"SUD": tour}, orders, CrowFlyModel())
+        assert r.tours["SUD"].stop_ids == ("D0", "JM", "C", "R", "B", "D1")
 
     def test_existing_lateness_does_not_block(self, grid, square_tour):
         # B is already late in the original plan (tw_end 495, arrives 502)
