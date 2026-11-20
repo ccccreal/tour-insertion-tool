@@ -1,0 +1,119 @@
+"""Read tours and orders from CSV, write results to CSV.
+
+tours.csv   tour_id, seq, stop_id, address, country, lat, lon,
+            tw_start, tw_end, service_min
+orders.csv  order_id, address, country, lat, lon, tw_start, tw_end,
+            service_min
+
+Times are "HH:MM". Empty cells are allowed for address, country, tw_start,
+tw_end and service_min (then the default service time is used).
+lat/lon are required until geocoding is added.
+"""
+
+from __future__ import annotations
+
+import csv
+from collections import defaultdict
+from pathlib import Path
+
+from tour_insertion.model import Schedule, Stop, Tour
+from tour_insertion.planner import Unplaced
+
+
+def parse_time(text: str | None) -> int | None:
+    """'08:30' -> 510, '' -> None."""
+    if text is None or not text.strip():
+        return None
+    hours, minutes = text.strip().split(":")
+    return int(hours) * 60 + int(minutes)
+
+
+def format_time(minutes: int | None) -> str:
+    """510 -> '08:30', None -> ''. Past midnight: '24:10' etc."""
+    if minutes is None:
+        return ""
+    return f"{minutes // 60:02d}:{minutes % 60:02d}"
+
+
+def _stop_from_row(row: dict[str, str], id_column: str, default_service: int,
+                   is_new: bool, where: str) -> Stop:
+    stop_id = (row.get(id_column) or "").strip()
+    if not stop_id:
+        raise ValueError(f"{where}: missing {id_column}")
+    lat, lon = (row.get("lat") or "").strip(), (row.get("lon") or "").strip()
+    if not lat or not lon:
+        raise ValueError(f"{where}: stop {stop_id!r} has no lat/lon "
+                         "(geocoding is not implemented yet)")
+    service = (row.get("service_min") or "").strip()
+    return Stop(
+        stop_id=stop_id,
+        lat=float(lat),
+        lon=float(lon),
+        address=(row.get("address") or "").strip(),
+        country=(row.get("country") or "").strip().upper(),
+        tw_start=parse_time(row.get("tw_start")),
+        tw_end=parse_time(row.get("tw_end")),
+        service_min=int(service) if service else default_service,
+        is_new=is_new,
+    )
+
+
+def read_tours(path: str | Path, default_service: int = 3) -> dict[str, Tour]:
+    """tour_id -> Tour, stops sorted by seq."""
+    rows: dict[str, list[tuple[int, Stop]]] = defaultdict(list)
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        for i, row in enumerate(csv.DictReader(f), start=2):
+            where = f"{path}:{i}"
+            tour_id = (row.get("tour_id") or "").strip()
+            if not tour_id:
+                raise ValueError(f"{where}: missing tour_id")
+            seq = int(row["seq"])
+            stop = _stop_from_row(row, "stop_id", default_service, False, where)
+            rows[tour_id].append((seq, stop))
+    tours = {}
+    for tour_id, items in rows.items():
+        items.sort(key=lambda item: item[0])
+        tours[tour_id] = Tour(tour_id, tuple(stop for _, stop in items))
+    return tours
+
+
+def read_orders(path: str | Path, default_service: int = 3) -> list[Stop]:
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        return [_stop_from_row(row, "order_id", default_service, True,
+                               f"{path}:{i}")
+                for i, row in enumerate(csv.DictReader(f), start=2)]
+
+
+TOUR_COLUMNS = ["tour_id", "seq", "stop_id", "is_new", "address", "country",
+                "lat", "lon", "arrival", "departure", "tw_start", "tw_end",
+                "slack_min"]
+
+
+def write_schedules(path: str | Path, schedules: list[Schedule]) -> None:
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=TOUR_COLUMNS)
+        writer.writeheader()
+        for schedule in schedules:
+            for seq, t in enumerate(schedule.times, start=1):
+                s = t.stop
+                writer.writerow({
+                    "tour_id": schedule.tour.tour_id, "seq": seq,
+                    "stop_id": s.stop_id, "is_new": int(s.is_new),
+                    "address": s.address, "country": s.country,
+                    "lat": s.lat, "lon": s.lon,
+                    "arrival": format_time(t.arrival),
+                    "departure": format_time(t.departure),
+                    "tw_start": format_time(s.tw_start),
+                    "tw_end": format_time(s.tw_end),
+                    "slack_min": "" if t.slack is None else t.slack,
+                })
+
+
+def write_unplaced(path: str | Path, unplaced: list[Unplaced]) -> None:
+    with open(path, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["order_id", "address", "tw_start", "tw_end", "reason"])
+        for u in unplaced:
+            writer.writerow([u.stop.stop_id, u.stop.address,
+                             format_time(u.stop.tw_start),
+                             format_time(u.stop.tw_end), u.reason])

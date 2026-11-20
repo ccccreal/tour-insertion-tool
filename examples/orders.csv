@@ -1,0 +1,6 @@
+order_id,address,country,lat,lon,tw_start,tw_end,service_min
+N1,Grueze,CH,47.4990,8.7520,,,
+N2,Sennhof,CH,47.4720,8.7670,,,
+N3,Toess Dorf,CH,47.4840,8.7020,,,
+N4,Waldegg,CH,47.5060,8.7000,,09:00,
+N5,Elsau (too early),CH,47.5040,8.8000,,08:05,

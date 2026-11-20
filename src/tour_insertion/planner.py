@@ -1,0 +1,110 @@
+"""Insert many new stops into many tours (greedy cheapest insertion).
+
+Replaces the PA's candidate set (src/env/kandidaten.py) for this use case:
+there is no simulator and no decision over time, all orders are known in
+the morning.
+
+Algorithm
+---------
+    while orders are left:
+        for every order: best insertion over all tours
+        orders that fit nowhere -> unplaced
+        insert the ONE order with the smallest delta (global cheapest)
+        recompute, because the changed tour affects the next order
+
+Inserting the globally cheapest order first makes the result independent of
+the row order in the CSV. An order that fits nowhere will not fit later
+either: adding stops only makes tours longer.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
+
+from tour_insertion.insertion import best_insertion, option_key
+from tour_insertion.model import InsertionOption, Stop, Tour
+from tour_insertion.traveltime import TravelModel
+
+REASON_NO_POSITION = "no_feasible_position"
+REASON_NO_TOURS = "no_tours"
+
+
+@dataclass(frozen=True, slots=True)
+class Unplaced:
+    stop: Stop
+    reason: str
+
+
+@dataclass
+class PlanResult:
+    tours: dict[str, Tour]
+    inserted: list[InsertionOption] = field(default_factory=list)
+    unplaced: list[Unplaced] = field(default_factory=list)
+
+
+def insert_orders(tours: Mapping[str, Tour], orders: Sequence[Stop],
+                  model: TravelModel, *, fixed_first: bool = True,
+                  fixed_last: bool = True, tolerance_min: int = 0,
+                  start_times: Mapping[str, int] | None = None) -> PlanResult:
+    """Insert all `orders` into `tours`. Input objects are not changed."""
+    _check_ids(tours, orders)
+    start_times = start_times or {}
+    result = PlanResult(tours=dict(tours))
+    pending = sorted(orders, key=lambda s: s.stop_id)
+
+    if not result.tours:
+        result.unplaced = [Unplaced(o, REASON_NO_TOURS) for o in pending]
+        return result
+
+    while pending:
+        best: InsertionOption | None = None
+        nowhere: list[Stop] = []
+        for order in pending:
+            option = _best_over_tours(result.tours, order, model, fixed_first,
+                                      fixed_last, tolerance_min, start_times)
+            if option is None:
+                nowhere.append(order)
+            elif best is None or option_key(option) < option_key(best):
+                best = option
+
+        for order in nowhere:
+            result.unplaced.append(Unplaced(order, REASON_NO_POSITION))
+            pending.remove(order)
+        if best is None:
+            break
+
+        result.tours[best.tour_id] = best.new_tour
+        result.inserted.append(best)
+        pending = [o for o in pending if o.stop_id != best.stop_id]
+
+    return result
+
+
+def _best_over_tours(tours: Mapping[str, Tour], order: Stop,
+                     model: TravelModel, fixed_first: bool, fixed_last: bool,
+                     tolerance_min: int,
+                     start_times: Mapping[str, int]) -> InsertionOption | None:
+    best: InsertionOption | None = None
+    for tour_id in sorted(tours):
+        option = best_insertion(tours[tour_id], order, model,
+                                fixed_first=fixed_first, fixed_last=fixed_last,
+                                tolerance_min=tolerance_min,
+                                start_time=start_times.get(tour_id))
+        if option is not None and (best is None
+                                   or option_key(option) < option_key(best)):
+            best = option
+    return best
+
+
+def _check_ids(tours: Mapping[str, Tour], orders: Sequence[Stop]) -> None:
+    seen: set[str] = set()
+    for tour in tours.values():
+        for stop in tour.stops:
+            if stop.stop_id in seen:
+                raise ValueError(f"duplicate stop_id: {stop.stop_id!r}")
+            seen.add(stop.stop_id)
+    for order in orders:
+        if order.stop_id in seen:
+            raise ValueError(f"order id already used: {order.stop_id!r}")
+        seen.add(order.stop_id)

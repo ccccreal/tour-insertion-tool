@@ -1,0 +1,25 @@
+[project]
+name = "tour-insertion-tool"
+version = "0.1.0"
+description = "Insert overnight orders into pre-planned delivery tours (cheapest feasible insertion)."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+tour-insert = "tour_insertion.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "tests"]
