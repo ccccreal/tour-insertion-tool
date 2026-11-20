@@ -32,8 +32,22 @@ REASON_NO_TOURS = "no_tours"
 
 @dataclass(frozen=True, slots=True)
 class Unplaced:
-    stop: Stop
+    """An order that is not in any tour, and why.
+
+    `stop` is None when the order never became a Stop (geocoding failed).
+    """
+
+    order_id: str
+    address: str
     reason: str
+    stop: Stop | None = None
+    tw_start: int | None = None
+    tw_end: int | None = None
+
+    @classmethod
+    def from_stop(cls, stop: Stop, reason: str) -> Unplaced:
+        return cls(stop.stop_id, stop.address, reason, stop,
+                   stop.tw_start, stop.tw_end)
 
 
 @dataclass
@@ -54,7 +68,7 @@ def insert_orders(tours: Mapping[str, Tour], orders: Sequence[Stop],
     pending = sorted(orders, key=lambda s: s.stop_id)
 
     if not result.tours:
-        result.unplaced = [Unplaced(o, REASON_NO_TOURS) for o in pending]
+        result.unplaced = [Unplaced.from_stop(o, REASON_NO_TOURS) for o in pending]
         return result
 
     while pending:
@@ -69,7 +83,7 @@ def insert_orders(tours: Mapping[str, Tour], orders: Sequence[Stop],
                 best = option
 
         for order in nowhere:
-            result.unplaced.append(Unplaced(order, REASON_NO_POSITION))
+            result.unplaced.append(Unplaced.from_stop(order, REASON_NO_POSITION))
             pending.remove(order)
         if best is None:
             break
