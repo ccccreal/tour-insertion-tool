@@ -19,9 +19,22 @@ from tour_insertion.csv_io import format_time
 from tour_insertion.model import Schedule
 from tour_insertion.planner import Unplaced
 
-# Colour-blind-friendly palette (Okabe-Ito), no red: red means "not placed"
-COLOURS = ["#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9",
-           "#F0E442", "#000000", "#999999"]
+# 12 clearly different tour colours (no pure red: red means "not placed").
+# Neighbouring entries differ strongly in hue AND brightness, so tours that
+# get consecutive colours are easy to tell apart. From the 13th tour on the
+# colours repeat.
+COLOURS = ["#1f77b4",  # blue
+           "#ff7f0e",  # orange
+           "#2ca02c",  # green
+           "#9467bd",  # purple
+           "#17becf",  # cyan
+           "#8c564b",  # brown
+           "#e377c2",  # pink
+           "#1b2a6b",  # dark navy
+           "#bcbd22",  # olive
+           "#555555",  # dark grey
+           "#00695c",  # dark teal
+           "#f5b800"]  # yellow-gold
 UNPLACED_COLOUR = "#D7263D"
 
 
@@ -65,7 +78,9 @@ def build_map(schedules: list[Schedule], unplaced: list[Unplaced] = (),
     for i, schedule in enumerate(schedules):
         colour = COLOURS[i % len(COLOURS)]
         tour_id = schedule.tour.tour_id
-        layer = folium.FeatureGroup(name=f"{tour_id} ({len(schedule.times)} stops)")
+        layer = folium.FeatureGroup(            # coloured dot in the layer list
+            name=f'<span style="color:{colour};font-size:16px">●</span> '
+                 f"{html.escape(tour_id)} ({len(schedule.times)} stops)")
         folium.PolyLine([t.stop.point for t in schedule.times], color=colour,
                         weight=4, opacity=0.8, tooltip=tour_id).add_to(layer)
         last = len(schedule.times)
