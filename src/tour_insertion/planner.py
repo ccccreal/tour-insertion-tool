@@ -71,12 +71,30 @@ def insert_orders(tours: Mapping[str, Tour], orders: Sequence[Stop],
         result.unplaced = [Unplaced.from_stop(o, REASON_NO_TOURS) for o in pending]
         return result
 
+    # Best option per (order, tour). After an insertion only the changed
+    # tour has to be recomputed: the result is the same as recomputing
+    # everything, but about n_tours times faster.
+    cache: dict[tuple[str, str], InsertionOption | None] = {}
+
+    def option_for(order: Stop, tour_id: str) -> InsertionOption | None:
+        key = (order.stop_id, tour_id)
+        if key not in cache:
+            cache[key] = best_insertion(
+                result.tours[tour_id], order, model, fixed_first=fixed_first,
+                fixed_last=fixed_last, tolerance_min=tolerance_min,
+                start_time=start_times.get(tour_id))
+        return cache[key]
+
     while pending:
         best: InsertionOption | None = None
         nowhere: list[Stop] = []
         for order in pending:
-            option = _best_over_tours(result.tours, order, model, fixed_first,
-                                      fixed_last, tolerance_min, start_times)
+            option = None
+            for tour_id in sorted(result.tours):
+                candidate = option_for(order, tour_id)
+                if candidate is not None and (
+                        option is None or option_key(candidate) < option_key(option)):
+                    option = candidate
             if option is None:
                 nowhere.append(order)
             elif best is None or option_key(option) < option_key(best):
@@ -91,24 +109,10 @@ def insert_orders(tours: Mapping[str, Tour], orders: Sequence[Stop],
         result.tours[best.tour_id] = best.new_tour
         result.inserted.append(best)
         pending = [o for o in pending if o.stop_id != best.stop_id]
+        for order in pending:                     # that tour has changed
+            cache.pop((order.stop_id, best.tour_id), None)
 
     return result
-
-
-def _best_over_tours(tours: Mapping[str, Tour], order: Stop,
-                     model: TravelModel, fixed_first: bool, fixed_last: bool,
-                     tolerance_min: int,
-                     start_times: Mapping[str, int]) -> InsertionOption | None:
-    best: InsertionOption | None = None
-    for tour_id in sorted(tours):
-        option = best_insertion(tours[tour_id], order, model,
-                                fixed_first=fixed_first, fixed_last=fixed_last,
-                                tolerance_min=tolerance_min,
-                                start_time=start_times.get(tour_id))
-        if option is not None and (best is None
-                                   or option_key(option) < option_key(best)):
-            best = option
-    return best
 
 
 def _check_ids(tours: Mapping[str, Tour], orders: Sequence[Stop]) -> None:
