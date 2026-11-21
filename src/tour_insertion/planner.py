@@ -32,9 +32,8 @@ REASON_NO_TOURS = "no_tours"
 
 @dataclass(frozen=True, slots=True)
 class Unplaced:
-    """An order that is not in any tour, and why.
-
-    `stop` is None when the order never became a Stop (geocoding failed).
+    """An order that is not in any tour, or a tour stop that was skipped,
+    and why. `stop` is None when it never became a Stop (geocoding failed).
     """
 
     order_id: str
@@ -43,6 +42,7 @@ class Unplaced:
     stop: Stop | None = None
     tw_start: int | None = None
     tw_end: int | None = None
+    tour_id: str = ""          # set for skipped stops of an existing tour
 
     @classmethod
     def from_stop(cls, stop: Stop, reason: str) -> Unplaced:

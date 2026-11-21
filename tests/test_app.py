@@ -33,3 +33,12 @@ def test_app_switches_language():
     at = AppTest.from_file(APP, default_timeout=30).run()
     at.selectbox[0].set_value("Français").run()
     assert at.title[0].value == "Insérer des commandes dans les tournées"
+
+
+def test_app_optimize_shows_comparison():
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    at.checkbox[0].check().run()                             # optimise tours
+    at.radio[0].set_value(at.radio[0].options[1]).run()     # Winterthur example
+    at.button[0].click().run()
+    assert not at.exception and not at.error
+    assert any(h.value == "Optimierung" for h in at.subheader)

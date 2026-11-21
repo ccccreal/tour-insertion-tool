@@ -25,7 +25,7 @@ COLOURS = ["#0072B2", "#E69F00", "#009E73", "#CC79A7", "#56B4E9",
 UNPLACED_COLOUR = "#D7263D"
 
 
-def _popup(tour_id: str, seq: int, t) -> str:
+def _popup(tour_id: str, seq: int, t, moved: bool = False) -> str:
     s = t.stop
     window = ""
     if s.tw_start is not None or s.tw_end is not None:
@@ -33,6 +33,8 @@ def _popup(tour_id: str, seq: int, t) -> str:
                   f"–{format_time(s.tw_end) or '…'}")
     slack = f"<br>slack {t.slack} min" if t.slack is not None else ""
     new = " <b>(NEW)</b>" if s.is_new else ""
+    if moved and not s.is_new:
+        new += " <i>(order changed by optimisation)</i>"
     return (f"<b>{html.escape(s.stop_id)}</b>{new}<br>"
             f"{html.escape(s.address)}<br>"
             f"tour {html.escape(tour_id)}, stop {seq}<br>"
@@ -53,7 +55,7 @@ def _icon(text: str, colour: str, is_new: bool, is_depot: bool) -> folium.DivIco
 
 
 def build_map(schedules: list[Schedule], unplaced: list[Unplaced] = (),
-              title: str = "Tours") -> folium.Map:
+              title: str = "Tours", moved: frozenset[str] = frozenset()) -> folium.Map:
     points = [t.stop.point for s in schedules for t in s.times]
     points += [u.stop.point for u in unplaced if u.stop is not None]
     if not points:
@@ -76,7 +78,8 @@ def build_map(schedules: list[Schedule], unplaced: list[Unplaced] = (),
                 t.stop.point,
                 icon=_icon("D" if is_depot else str(number), colour,
                            t.stop.is_new, is_depot),
-                popup=folium.Popup(_popup(tour_id, seq, t), max_width=260),
+                popup=folium.Popup(_popup(tour_id, seq, t, t.stop.stop_id in moved),
+                                   max_width=260),
                 tooltip=f"{tour_id} #{seq}: {t.stop.stop_id}",
             ).add_to(layer)
         layer.add_to(m)
@@ -124,11 +127,13 @@ def _legend(title: str) -> str:
 
 
 def map_html(schedules: list[Schedule], unplaced: list[Unplaced] = (),
-             title: str = "Tours") -> str:
+             title: str = "Tours", moved: frozenset[str] = frozenset()) -> str:
     """The map as one self-contained HTML page."""
-    return build_map(schedules, unplaced, title).get_root().render()
+    return build_map(schedules, unplaced, title, moved).get_root().render()
 
 
 def write_map(path: str | Path, schedules: list[Schedule],
-              unplaced: list[Unplaced] = (), title: str = "Tours") -> None:
-    Path(path).write_text(map_html(schedules, unplaced, title), encoding="utf-8")
+              unplaced: list[Unplaced] = (), title: str = "Tours",
+              moved: frozenset[str] = frozenset()) -> None:
+    Path(path).write_text(map_html(schedules, unplaced, title, moved),
+                          encoding="utf-8")

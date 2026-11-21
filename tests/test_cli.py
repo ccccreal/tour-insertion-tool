@@ -90,7 +90,7 @@ def test_end_to_end_with_geocoding(tmp_path):
     assert len(read_csv(out / "geocoding.csv")) == 6     # one row per geocoded row
 
 
-def test_tour_stop_that_cannot_be_geocoded_stops_the_run(tmp_path):
+def test_depot_that_cannot_be_geocoded_stops_the_run(tmp_path):
     import pytest
     tours = tmp_path / "tours.csv"
     tours.write_text(
@@ -99,5 +99,39 @@ def test_tour_stop_that_cannot_be_geocoded_stops_the_run(tmp_path):
     orders = tmp_path / "orders.csv"
     orders.write_text("order_id,address,country,lat,lon\n", encoding="utf-8")
     geocoder = Geocoder(None, {"FR": FakeProvider("FR", {})})
-    with pytest.raises(SystemExit, match="TOUR stops"):
+    with pytest.raises(SystemExit, match="depot"):
         main([str(tours), str(orders), "-o", str(tmp_path / "o")], geocoder=geocoder)
+
+
+def test_tour_stop_not_found_is_skipped_and_reported(tmp_path):
+    tours = tmp_path / "tours.csv"
+    tours.write_text(
+        "tour_id,seq,stop_id,address,country,lat,lon,tw_start,tw_end,service_min\n"
+        "A,0,A0,\"Depot, 69003 Lyon\",FR,,,08:00,,0\n"
+        "A,1,A1,\"Stop 1, 69001 Lyon\",FR,,,,,\n"
+        "A,2,A2,\"Missing, 69001 Lyon\",FR,,,,,\n"
+        "A,3,A3,\"Depot, 69003 Lyon\",FR,,,,,0\n", encoding="utf-8")
+    orders = tmp_path / "orders.csv"
+    orders.write_text("order_id,address,country,lat,lon\n"
+                      "N1,\"New 1, 69002 Lyon\",FR,,\n", encoding="utf-8")
+    table = {"Depot, 69003 Lyon": (45.760, 4.860, OK),
+             "Stop 1, 69001 Lyon": (45.767, 4.834, OK),
+             "New 1, 69002 Lyon": (45.750, 4.830, OK)}
+    out = tmp_path / "out"
+    assert main([str(tours), str(orders), "-o", str(out)],
+                geocoder=Geocoder(None, {"FR": FakeProvider("FR", table)})) == 0
+    ids = [r["stop_id"] for r in read_csv(out / "tours_new.csv")]
+    assert "A2" not in ids and "N1" in ids
+    skipped = read_csv(out / "skipped_stops.csv")
+    assert [(r["tour_id"], r["stop_id"], r["reason"]) for r in skipped] == [
+        ("A", "A2", "geocode_not_found")]
+
+
+def test_optimize_flag_writes_moved_column(tmp_path):
+    assert main([str(WINTERTHUR / "tours.csv"), str(WINTERTHUR / "orders.csv"),
+                 "-o", str(tmp_path), "--optimize"]) == 0
+    rows = read_csv(tmp_path / "tours_new.csv")
+    assert "moved" in rows[0]
+    for tour_id in ("T1", "T2"):            # depots still first and last
+        ids = [r["stop_id"] for r in rows if r["tour_id"] == tour_id]
+        assert ids[0].endswith("-00") and ids[-1].endswith("-99")

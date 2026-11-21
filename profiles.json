@@ -7,7 +7,8 @@
     "tolerance_min": 0,
     "open_start": false,
     "open_end": false,
-    "min_score": 0.5
+    "min_score": 0.5,
+    "optimize": false
   },
   "Lyon (FR)": {
     "speed_m_per_min": 250,
@@ -16,7 +17,8 @@
     "tolerance_min": 0,
     "open_start": false,
     "open_end": false,
-    "min_score": 0.5
+    "min_score": 0.5,
+    "optimize": false
   },
   "Winterthur (CH)": {
     "speed_m_per_min": 250,
@@ -25,6 +27,7 @@
     "tolerance_min": 0,
     "open_start": false,
     "open_end": false,
-    "min_score": 0.5
+    "min_score": 0.5,
+    "optimize": false
   }
 }

@@ -120,12 +120,14 @@ def read_orders(path: str | Path, default_service: int = 3) -> list[Stop]:
     return orders_from_rows(read_rows(path), default_service)
 
 
-TOUR_COLUMNS = ["tour_id", "seq", "stop_id", "is_new", "address", "country",
-                "lat", "lon", "arrival", "departure", "tw_start", "tw_end",
-                "slack_min"]
+TOUR_COLUMNS = ["tour_id", "seq", "stop_id", "is_new", "moved", "address",
+                "country", "lat", "lon", "arrival", "departure", "tw_start",
+                "tw_end", "slack_min"]
 
 
-def schedules_to_csv(schedules: list[Schedule]) -> str:
+def schedules_to_csv(schedules: list[Schedule],
+                     moved: frozenset[str] = frozenset()) -> str:
+    """moved: stop_ids whose order was changed by optimizing (column 'moved')."""
     out = io.StringIO()
     writer = csv.DictWriter(out, fieldnames=TOUR_COLUMNS, lineterminator="\n")
     writer.writeheader()
@@ -135,6 +137,7 @@ def schedules_to_csv(schedules: list[Schedule]) -> str:
             writer.writerow({
                 "tour_id": schedule.tour.tour_id, "seq": seq,
                 "stop_id": s.stop_id, "is_new": int(s.is_new),
+                "moved": int(s.stop_id in moved),
                 "address": s.address, "country": s.country,
                 "lat": s.lat, "lon": s.lon,
                 "arrival": format_time(t.arrival),
@@ -156,6 +159,16 @@ def unplaced_to_csv(unplaced: list[Unplaced]) -> str:
     return out.getvalue()
 
 
+def skipped_to_csv(skipped: list[Unplaced]) -> str:
+    """Stops of the given tours that were left out (address not found)."""
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\n")
+    writer.writerow(["tour_id", "stop_id", "address", "reason"])
+    for u in skipped:
+        writer.writerow([u.tour_id, u.order_id, u.address, u.reason])
+    return out.getvalue()
+
+
 def geocoding_to_csv(results: list[GeocodeResult]) -> str:
     """One row per looked-up address, to check the geocoding by eye."""
     out = io.StringIO()
@@ -170,8 +183,13 @@ def geocoding_to_csv(results: list[GeocodeResult]) -> str:
     return out.getvalue()
 
 
-def write_schedules(path: str | Path, schedules: list[Schedule]) -> None:
-    Path(path).write_text(schedules_to_csv(schedules), encoding="utf-8")
+def write_schedules(path: str | Path, schedules: list[Schedule],
+                    moved: frozenset[str] = frozenset()) -> None:
+    Path(path).write_text(schedules_to_csv(schedules, moved), encoding="utf-8")
+
+
+def write_skipped(path: str | Path, skipped: list[Unplaced]) -> None:
+    Path(path).write_text(skipped_to_csv(skipped), encoding="utf-8")
 
 
 def write_unplaced(path: str | Path, unplaced: list[Unplaced]) -> None:

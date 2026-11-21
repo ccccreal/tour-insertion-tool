@@ -73,11 +73,42 @@ The first stop's `tw_start` is the start time of the tour.
 Both are free and need no key. Results are cached in `.geocode_cache.json`
 (`--geocode-cache`), so each address is looked up once.
 
-- A **tour stop** that cannot be geocoded reliably stops the run with a list
-  of the addresses: a wrong depot or customer position would make the whole
-  tour wrong.
+- The **depot** (first and last stop of a tour) must be found: otherwise the
+  run stops with a list of the addresses, because every time of the tour
+  depends on it. Tip: give the depot as lat/lon, it rarely changes.
+- Any **other tour stop** that cannot be geocoded reliably is left out: the
+  tour is computed without it and the stop is listed in `skipped_stops.csv`
+  (and in the app). Times after that stop are then slightly too early.
 - A **new order** that cannot be geocoded reliably is not planned and appears
   in `unplaced.csv` (`geocode_not_found` / `geocode_uncertain`).
+
+## Optimising tours (optional)
+
+`--optimize` (or the checkbox in the app) also improves the order of the
+stops **within each tour**: same stops, same tour, time windows kept, depot
+stays first and last. Steps: improve the given tours, insert the new orders,
+improve once more.
+
+- Moves: move a run of 1-3 stops elsewhere in the tour, or reverse a part of
+  the tour (2-opt), repeated until nothing helps (local search, a heuristic).
+- Objective: tour duration from start to return, **waiting included** (a
+  shorter route that arrives too early and waits is not better). Ties: less
+  travel.
+- Output: before/after minutes per tour (before = insertion only) and the
+  stops whose order changed (column `moved`, marked in the map popup).
+
+Stops never change tour. Moving stops between tours is not implemented.
+
+## Travel time estimate
+
+    distance = great-circle distance (haversine, WGS84) x detour factor (1.35)
+    time     = distance / speed (250 m/min = 15 km/h), rounded up to minutes
+    < 50 m   = same location, no travel time
+
+Per stop the service time is added (default 3 min, column `service_min`), and
+the driver waits if a stop's time window has not opened yet. Comparing
+insertion positions uses the unrounded times; schedules use whole minutes.
+Detour factor and speed are assumptions, not measured for any city.
 
 ## Assumptions
 
@@ -101,7 +132,8 @@ Both are free and need no key. Results are cached in `.geocode_cache.json`
 2. ~~Geocoding: France (IGN Géoplateforme, BAN), Switzerland (swisstopo)~~
 3. ~~Map of the new tours~~
 4. ~~Web app (Streamlit)~~
-5. Optional: street-network travel times (OSRM), reordering existing stops
+5. ~~Optional reordering within each tour~~
+6. Optional: street-network travel times (OSRM), moving stops between tours
 
 ## Example data
 
@@ -110,10 +142,9 @@ this repository.
 
 - `examples/winterthur/`: 2 tours, 5 orders, with approximate coordinates
   (runs offline). Order N5 cannot be reached in time on purpose.
-- `examples/lyon/`: 2 tours, 10 orders, addresses only (needs internet).
-  Tours start at 08:00. The few time windows are deliberately generous: they
-  show the format but do not change the result. These two files are also the
-  templates offered for download in the web app.
+- `examples/lyon/`: 2 tours, 7 orders, addresses only (needs internet).
+  Public places and squares; C6 has no country (guessed from the postal code),
+  C7 is a made-up address that must end up in `unplaced.csv`.
 
 ## Origin
 
