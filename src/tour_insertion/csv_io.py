@@ -93,7 +93,11 @@ def tours_from_rows(rows: list[dict[str, str]],
         tour_id = (row.get("tour_id") or "").strip()
         if not tour_id:
             raise ValueError(f"{where}: missing tour_id")
-        seq = int(row["seq"])
+        try:
+            seq = int(row.get("seq") or "")
+        except ValueError:
+            raise ValueError(f"{where}: seq must be a whole number, "
+                             f"got {row.get('seq')!r}") from None
         stop = _stop_from_row(row, "stop_id", default_service, False, where)
         grouped[tour_id].append((seq, stop))
     tours = {}

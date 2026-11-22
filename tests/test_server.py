@@ -1,0 +1,109 @@
+"""Web API (FastAPI) with the test client, no network."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+pytest.importorskip("fastapi")
+from fastapi.testclient import TestClient  # noqa: E402
+
+from test_cli import FakeProvider  # noqa: E402
+from tour_insertion.geocoding import OK, Geocoder  # noqa: E402
+from tour_insertion.server import create_app  # noqa: E402
+
+EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
+
+
+@pytest.fixture
+def client():
+    table = {"Depot, 69003 Lyon": (45.760, 4.860, OK),
+             "Stop 1, 69001 Lyon": (45.767, 4.834, OK),
+             "New 1, 69002 Lyon": (45.750, 4.830, OK)}
+    fake = Geocoder(None, {"FR": FakeProvider("FR", table)})
+    return TestClient(create_app(lambda settings: fake))
+
+
+def plan(client, tours: bytes, orders: bytes, settings: dict | None = None):
+    return client.post("/api/plan", files={"tours": ("tours.csv", tours),
+                                           "orders": ("orders.csv", orders)},
+                       data={"settings": json.dumps(settings or {})})
+
+
+def test_health_profiles_examples(client):
+    assert client.get("/api/health").json() == "ok"
+    assert "Standard" in client.get("/api/profiles").json()
+    names = client.get("/api/examples").json()
+    assert "winterthur" in names
+    csv_text = client.get("/api/examples/winterthur/tours").text
+    assert csv_text.startswith("tour_id,seq")
+    assert client.get("/api/examples/nope/tours").status_code == 404
+    assert client.get("/api/templates/orders").text.startswith("order_id")
+
+
+def test_plan_winterthur(client):
+    r = plan(client, (EXAMPLES / "winterthur/tours.csv").read_bytes(),
+             (EXAMPLES / "winterthur/orders.csv").read_bytes(), {"optimize": True})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert len(body["tours"]) == 2 and body["n_orders"] == 5
+    assert len(body["inserted"]) == 4 and body["unplaced"][0]["order_id"] == "N5"
+    assert body["unplaced"][0]["lat"] is not None          # can be dragged in
+    assert body["changes"] and body["csv"]["tours"].startswith("tour_id")
+    first = body["tours"][0]["stops"][0]
+    assert first["arrival_hhmm"] == "08:00" and first["stop_id"].endswith("-00")
+
+
+def test_plan_bad_input_is_400(client):
+    r = plan(client, b"tour_id,seq,stop_id,address,lat,lon\nA,x,A0,a,1,2\n", b"order_id\n")
+    assert r.status_code == 400 and "seq" in r.json()["detail"]
+    r = plan(client, b"\xff\xfe\x00bad", b"x")
+    assert r.status_code == 400
+
+
+def test_plan_with_geocoding_and_skipped_stop(client):
+    tours = ("tour_id,seq,stop_id,address,country,lat,lon,tw_start,tw_end,service_min\n"
+             "A,0,A0,\"Depot, 69003 Lyon\",FR,,,08:00,,0\n"
+             "A,1,A1,\"Stop 1, 69001 Lyon\",FR,,,,,\n"
+             "A,2,A2,\"Missing, 69001 Lyon\",FR,,,,,\n"
+             "A,3,A3,\"Depot, 69003 Lyon\",FR,,,,,0\n").encode()
+    orders = "order_id,address,country\nN1,\"New 1, 69002 Lyon\",FR\n".encode()
+    body = plan(client, tours, orders).json()
+    assert [(s["tour_id"], s["order_id"]) for s in body["skipped"]] == [("A", "A2")]
+    assert "N1" in [s["stop_id"] for s in body["tours"][0]["stops"]]
+
+
+def test_schedule_after_manual_move(client):
+    body = plan(client, (EXAMPLES / "winterthur/tours.csv").read_bytes(),
+                (EXAMPLES / "winterthur/orders.csv").read_bytes()).json()
+    tours = body["tours"]
+    # move the second stop of T1 to the end of T2 (before its depot)
+    stop = tours[0]["stops"].pop(1)
+    stop["moved"] = True
+    tours[1]["stops"].insert(len(tours[1]["stops"]) - 1, stop)
+    r = client.post("/api/schedule", json={"settings": body["settings"], "tours": tours,
+                                          "unplaced": body["unplaced"]})
+    assert r.status_code == 200, r.text
+    out = r.json()
+    ids_t2 = [s["stop_id"] for s in out["tours"][1]["stops"]]
+    assert ids_t2[-2] == stop["stop_id"] and ids_t2[-1].endswith("-99")
+    assert out["tours"][1]["duration"] > tours[1]["duration"]       # longer now
+    assert "N5" in out["csv"]["unplaced"]
+
+
+def test_schedule_marks_late_stops(client):
+    stops = [{"stop_id": "D", "lat": 47.5, "lon": 8.72, "tw_start": 480},
+             {"stop_id": "X", "lat": 47.6, "lon": 8.72, "tw_end": 485, "service_min": 3},
+             {"stop_id": "E", "lat": 47.5, "lon": 8.72}]
+    out = client.post("/api/schedule", json={"tours": [{"tour_id": "T", "stops": stops}]}).json()
+    assert [s["late"] for s in out["tours"][0]["stops"]] == [False, True, False]
+
+
+def test_password(monkeypatch):
+    monkeypatch.setenv("TOOL_PASSWORD", "secret")
+    c = TestClient(create_app())
+    assert c.get("/api/health").status_code == 401
+    assert c.get("/api/health", auth=("x", "wrong")).status_code == 401
+    assert c.get("/api/health", auth=("anyone", "secret")).status_code == 200

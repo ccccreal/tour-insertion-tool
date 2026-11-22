@@ -9,12 +9,14 @@ dependencies = ["folium>=0.17"]
 
 [project.optional-dependencies]
 app = ["streamlit>=1.45"]
+server = ["fastapi>=0.110", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9"]
 
 [project.scripts]
 tour-insert = "tour_insertion.cli:main"
+tour-insert-server = "tour_insertion.server:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "httpx>=0.27"]
 
 [build-system]
 requires = ["setuptools>=77"]
