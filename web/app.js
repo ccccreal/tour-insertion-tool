@@ -63,12 +63,11 @@ async function init() {
 
   $("language").addEventListener("change", () => {
     LANG = $("language").value; store("lang", LANG);
-    applyTexts(); fillExamples(); if (state.plan) render();
+    applyTexts(); fillSources(); $("optimize-help").title = t("optimize_help");
+    if (state.plan) render();
   });
-  document.querySelectorAll("input[name=source]").forEach(r => r.addEventListener("change", () => {
-    const example = document.querySelector("input[name=source]:checked").value === "example";
-    $("upload-box").hidden = example; $("example-box").hidden = !example;
-  }));
+  $("optimize-help").title = t("optimize_help");
+  initMap();                        // the map is there from the start
   $("profile").addEventListener("change", () => applyProfile($("profile").value));
   $("run").addEventListener("click", runPlan);
   $("undo").addEventListener("click", undo);
@@ -81,13 +80,27 @@ async function init() {
   }
   $("profile").replaceChildren(...Object.keys(state.profiles).map(n => h("option", { value: n }, n)));
   applyProfile(Object.keys(state.profiles)[0]);
-  fillExamples();
+  fillSources();
 }
 
-function fillExamples() {
-  const current = $("example").value;
-  $("example").replaceChildren(...state.examples.map(n => h("option", { value: n }, t("ex_" + n))));
-  if (current) $("example").value = current;
+function selectedSource() {
+  const checked = document.querySelector("input[name=source]:checked");
+  return checked ? checked.value : "upload";
+}
+
+// Radio buttons: own files, then one per example data set
+function fillSources() {
+  const current = selectedSource();
+  const options = [["upload", t("source_upload")], ...state.examples.map(n => [n, t("ex_" + n)])];
+  $("sources").replaceChildren(...options.map(([value, text]) => {
+    const radio = h("input", { type: "radio", name: "source", value });
+    radio.checked = value === current;
+    radio.addEventListener("change", () => { $("upload-box").hidden = selectedSource() !== "upload"; });
+    return h("label", {}, radio, text);
+  }));
+  if (!document.querySelector("input[name=source]:checked"))
+    document.querySelector("input[name=source]").checked = true;
+  $("upload-box").hidden = selectedSource() !== "upload";
 }
 
 function applyProfile(name) {
@@ -121,10 +134,10 @@ function showError(text) { $("error").textContent = text; $("error").hidden = !t
 async function runPlan() {
   showError("");
   const form = new FormData();
-  const example = document.querySelector("input[name=source]:checked").value === "example";
+  const source = selectedSource();
   try {
-    if (example) {
-      const name = $("example").value;
+    if (source !== "upload") {
+      const name = source;
       for (const kind of ["tours", "orders"]) {
         const text = await (await fetch(`api/examples/${name}/${kind}`)).text();
         form.append(kind, new Blob([text], { type: "text/csv" }), `${name}_${kind}.csv`);
@@ -155,8 +168,7 @@ function setPlan(data) {
     manual: new Set(), hidden: new Set(), history: []
   });
   $("results").hidden = false;
-  $("intro").hidden = true;
-  if (!map) initMap();
+  $("metrics").hidden = false;
   fitMap();
   render();
 }
@@ -167,7 +179,7 @@ function setPlan(data) {
 
 function initMap() {
   // a view must be set before anything is drawn on the map
-  map = L.map("map", { zoomControl: true }).setView([47.37, 8.54], 12);
+  map = L.map("map", { zoomControl: true }).setView([47.0, 5.0], 6);
   L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19, attribution: "&copy; OpenStreetMap contributors"
   }).addTo(map);
