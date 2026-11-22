@@ -1,3 +1,0 @@
-# For Streamlit Community Cloud (app.py). Locally use: uv sync --extra app
-folium>=0.17
-streamlit>=1.45

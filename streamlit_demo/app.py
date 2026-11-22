@@ -1,7 +1,10 @@
 """Web app for the tour insertion tool (Streamlit).
 
-Run locally:   uv sync --extra app && uv run streamlit run app.py
-Same code runs on Streamlit Community Cloud (entry point: app.py).
+Run locally:   uv sync --extra app && uv run streamlit run streamlit_demo/app.py
+Same code runs on Streamlit Community Cloud (entry point:
+streamlit_demo/app.py). It lives in its own folder with its own
+requirements.txt, because Community Cloud prefers a dependency file next
+to the entry point over the uv.lock in the repository root.
 """
 
 from __future__ import annotations
@@ -13,7 +16,7 @@ from pathlib import Path
 
 # Make `tour_insertion` importable without installing the package
 # (Streamlit Community Cloud only installs requirements.txt).
-sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 import streamlit as st
 import streamlit.components.v1 as components
@@ -24,7 +27,7 @@ from tour_insertion.csv_io import (format_time, geocoding_to_csv, read_rows,
 from tour_insertion.mapview import map_html
 from tour_insertion.pipeline import InputError, Settings, make_geocoder, run
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parents[1]          # repository root
 EXAMPLES = ROOT / "examples"
 PROFILES = json.loads((ROOT / "profiles.json").read_text(encoding="utf-8"))
 PROFILES.pop("_comment", None)

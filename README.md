@@ -67,9 +67,10 @@ internet.
 
 ### Streamlit demo (older)
 
-`app.py` is the first web version (Streamlit, no drag & drop). It still
-runs the demo on Streamlit Community Cloud:
-`uv sync --extra app && uv run streamlit run app.py`.
+`streamlit_demo/app.py` is the first web version (Streamlit, no drag &
+drop). It still runs the demo on Streamlit Community Cloud (main file path
+`streamlit_demo/app.py`; its own `requirements.txt` next to it):
+`uv sync --extra app && uv run streamlit run streamlit_demo/app.py`.
 
 ## Input
 
