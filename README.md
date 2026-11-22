@@ -34,16 +34,42 @@ Output folder:
 
 ## Web app
 
-For dispatchers who do not want to use a terminal: upload the two CSV files,
-see the map, download the result. Languages: German, French, English.
+For dispatchers: upload the two CSV files (or pick an example), see the
+tours on a map, **drag stops with the mouse onto another tour's line**, and
+download the result. Languages: German, French, English.
 
 ```bash
-uv sync --extra app
-uv run streamlit run app.py      # opens http://localhost:8501
+uv sync --extra server
+uv run tour-insert-server        # opens on http://localhost:8000
 ```
 
-Default values per customer/city live in `profiles.json`. The same `app.py`
-runs on Streamlit Community Cloud (it uses `requirements.txt`).
+- `src/tour_insertion/server.py`: web API (FastAPI) around the planning
+  core. It keeps no state; the page holds the current plan.
+  `POST /api/plan` plans, `POST /api/schedule` recomputes times after a
+  manual move. API docs: `/api/docs`.
+- `web/`: the page (plain JavaScript, Leaflet map, no build step).
+- Drag & drop: drop a stop (or an order marked ✕ that fits nowhere) on a
+  tour line; it goes between the two stops of that line, both tours are
+  recomputed, stops after their time window turn red, *Undo* goes back.
+- `TOOL_PASSWORD=...` asks for a password (HTTP Basic auth).
+  `TOOL_GEOCODE_CACHE` sets the cache file.
+
+### Docker
+
+```bash
+docker compose up -d             # http://localhost:8000
+# or: docker build -t tour-insertion . && docker run -p 8000:8000 tour-insertion
+```
+
+The same image runs on any server. Put it behind HTTPS (e.g. Caddy or the
+provider's proxy) and set `TOOL_PASSWORD` before it is reachable from the
+internet.
+
+### Streamlit demo (older)
+
+`app.py` is the first web version (Streamlit, no drag & drop). It still
+runs the demo on Streamlit Community Cloud:
+`uv sync --extra app && uv run streamlit run app.py`.
 
 ## Input
 
@@ -131,7 +157,7 @@ Detour factor and speed are assumptions, not measured for any city.
 1. ~~Core: insertion, schedule, feasibility, CLI~~
 2. ~~Geocoding: France (IGN Géoplateforme, BAN), Switzerland (swisstopo)~~
 3. ~~Map of the new tours~~
-4. ~~Web app (Streamlit)~~
+4. ~~Web app (Streamlit demo, then API + JavaScript page with drag & drop)~~
 5. ~~Optional reordering within each tour~~
 6. Optional: street-network travel times (OSRM), moving stops between tours
 

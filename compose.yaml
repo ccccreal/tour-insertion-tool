@@ -1,0 +1,14 @@
+# docker compose up -d   ->  http://localhost:8000
+services:
+  tool:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # set a password before putting this on the internet
+      TOOL_PASSWORD: ${TOOL_PASSWORD:-}
+    volumes:
+      - tool-data:/data
+    restart: unless-stopped
+volumes:
+  tool-data:
