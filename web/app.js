@@ -15,7 +15,8 @@ const SNAP_PX = 40;           // how close to a tour line a stop must be dropped
 const state = {
   profiles: {}, examples: [], plan: null, settings: null,
   tours: [], unplaced: [], skipped: [], geocoding: [], changes: [], csv: {},
-  deltas: {}, manual: new Set(), hidden: new Set(), history: []
+  deltas: {}, manual: new Set(), placed: new Set(), hidden: new Set(), history: [],
+  placing: null               // {kind: "unplaced"|"skipped", index} while waiting for a map click
 };
 let map = null, layer = null, highlight = null, legend = null;
 
@@ -71,6 +72,7 @@ async function init() {
   $("profile").addEventListener("change", () => applyProfile($("profile").value));
   $("run").addEventListener("click", runPlan);
   $("undo").addEventListener("click", undo);
+  document.addEventListener("keydown", e => { if (e.key === "Escape" && state.placing) stopPlacing(); });
 
   try {
     state.profiles = await (await fetch("api/profiles")).json();
@@ -165,7 +167,7 @@ function setPlan(data) {
     plan: data, settings: data.settings, tours: data.tours, unplaced: data.unplaced,
     skipped: data.skipped, geocoding: data.geocoding, changes: data.changes, csv: data.csv,
     deltas: Object.fromEntries(data.inserted.map(o => [o.order_id, o.delta])),
-    manual: new Set(), hidden: new Set(), history: []
+    manual: new Set(), placed: new Set(), hidden: new Set(), history: [], placing: null
   });
   $("results").hidden = false;
   $("metrics").hidden = false;
@@ -185,6 +187,8 @@ function initMap() {
   }).addTo(map);
   layer = L.layerGroup().addTo(map);
   highlight = L.polyline([], { weight: 12, opacity: 0.45, dashArray: "8 8", interactive: false }).addTo(map);
+  map.on("zoomend", () => { if (state.plan) renderMap(); });   // spread depends on zoom
+  map.on("click", e => placeAt(e.latlng));
 }
 
 function fitMap() {
@@ -209,17 +213,49 @@ function popupHtml(tour, number, s) {
     esc(s.address),
     `${esc(t("col_tour"))} ${esc(tour.tour_id)}, ${esc(t("stop_word"))} ${number}`,
     `${esc(t("col_arrival"))} ${hhmm(s.arrival)}`];
+  if (s.items !== null && s.items !== undefined) lines.push(`${esc(t("col_items"))}: ${s.items}`);
   if (s.tw_start !== null || s.tw_end !== null)
     lines.push(`${esc(t("col_window"))} ${hhmm(s.tw_start) || "…"}–${hhmm(s.tw_end) || "…"}`);
   if (s.slack !== null && s.slack !== undefined) lines.push(`${esc(t("col_slack"))}: ${s.slack}`);
   if (s.late) lines.push(`<b style="color:#d7263d">${esc(t("late"))}</b>`);
+  if (state.placed.has(s.stop_id)) lines.push(`<i>${esc(t("placed_by_hand"))}</i>`);
   if (state.manual.has(s.stop_id)) lines.push(`<i>${esc(t("moved_by_hand"))}</i>`);
   else if (s.moved && !s.is_new) lines.push(`<i>${esc(t("moved"))}</i>`);
   return lines.join("<br>");
 }
 
+// Markers that would sit on the same spot are spread on a small circle
+// around it (with a thin line to the real position), so that each one can
+// be seen and dragged. Depots are drawn once per location and not spread.
+const SAME_SPOT_DIGITS = 5;            // ~1 m: same rounded position = same spot
+
+function spotKey(lat, lon) { return lat.toFixed(SAME_SPOT_DIGITS) + "," + lon.toFixed(SAME_SPOT_DIGITS); }
+
+function spreadPositions(entries) {
+  const groups = new Map();
+  entries.forEach(e => {
+    const key = spotKey(e.lat, e.lon);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(e);
+  });
+  for (const group of groups.values()) {
+    if (group.length === 1) { group[0].pos = [group[0].lat, group[0].lon]; continue; }
+    const centre = map.latLngToLayerPoint([group[0].lat, group[0].lon]);
+    const radius = 18 + 4 * group.length;
+    group.forEach((e, i) => {
+      const angle = -Math.PI / 2 + 2 * Math.PI * i / group.length;
+      const p = L.point(centre.x + radius * Math.cos(angle), centre.y + radius * Math.sin(angle));
+      const ll = map.layerPointToLatLng(p);
+      e.pos = [ll.lat, ll.lng];
+      e.spread = true;
+    });
+  }
+}
+
 function renderMap() {
   layer.clearLayers();
+  const entries = [];                     // draggable markers, positioned below
+  const depots = new Map();               // spot -> {lat, lon, tours: [...], colours}
   state.tours.forEach((tour, ti) => {
     if (state.hidden.has(tour.tour_id)) return;
     const fill = colour(ti);
@@ -228,27 +264,54 @@ function renderMap() {
     let number = 0;
     tour.stops.forEach((s, k) => {
       const depot = (k === 0 || k === tour.stops.length - 1) && !s.is_new;
-      if (!depot) number += 1;
-      const marker = L.marker([s.lat, s.lon], {
-        icon: stopIcon(depot ? "D" : String(number), fill, s.is_new, depot, s.late),
-        draggable: !depot, title: `${tour.tour_id} #${depot ? "D" : number}: ${s.stop_id}`,
-        zIndexOffset: s.is_new ? 500 : 0
-      }).bindPopup(popupHtml(tour, depot ? "D" : number, s));
-      if (!depot) attachDrag(marker, { kind: "tour", tourIndex: ti, stopIndex: k });
-      marker.addTo(layer);
+      if (depot) {
+        const key = spotKey(s.lat, s.lon);
+        if (!depots.has(key)) depots.set(key, { lat: s.lat, lon: s.lon, address: s.address, tours: [], fill });
+        const d = depots.get(key);
+        if (!d.tours.includes(tour.tour_id)) d.tours.push(tour.tour_id);
+        return;
+      }
+      number += 1;
+      entries.push({ lat: s.lat, lon: s.lon, kind: "tour", tour, ti, k, s, number, fill });
     });
   });
   state.unplaced.forEach((u, j) => {
     if (u.lat === null || u.lat === undefined) return;
-    const marker = L.marker([u.lat, u.lon], {
-      draggable: true, zIndexOffset: 1000, title: u.order_id,
-      icon: L.divIcon({ className: "", iconSize: [26, 26], iconAnchor: [13, 13],
-                        html: '<div class="unplaced-icon">✕</div>' })
-    }).bindPopup(`<b>${esc(u.order_id)}</b> – ${esc(t("m_unplaced"))}<br>${esc(u.address)}<br>` +
-                 `${esc(t(u.reason))}<br><i>${esc(t("unplaced_hint"))}</i>`);
-    attachDrag(marker, { kind: "unplaced", index: j });
-    marker.addTo(layer);
+    entries.push({ lat: u.lat, lon: u.lon, kind: "unplaced", u, j });
   });
+  spreadPositions(entries);
+
+  for (const d of depots.values()) {
+    const fill = d.tours.length > 1 ? "#333333" : d.fill;
+    L.marker([d.lat, d.lon], { icon: stopIcon("D", fill, false, true, false), zIndexOffset: 2000,
+                               title: d.tours.join(", ") })
+      .bindPopup(`<b>${esc(t("depot"))}</b><br>${esc(d.address)}<br>${esc(t("col_tour"))}: ${esc(d.tours.join(", "))}`)
+      .addTo(layer);
+  }
+  for (const e of entries) {
+    if (e.spread) L.polyline([[e.lat, e.lon], e.pos], { color: "#444", weight: 1, opacity: 0.7,
+                                                         interactive: false }).addTo(layer);
+    let marker;
+    if (e.kind === "tour") {
+      marker = L.marker(e.pos, {
+        icon: stopIcon(String(e.number), e.fill, e.s.is_new, false, e.s.late),
+        draggable: true, title: `${e.tour.tour_id} #${e.number}: ${e.s.stop_id}`,
+        zIndexOffset: e.s.is_new ? 500 : 0
+      }).bindPopup(popupHtml(e.tour, e.number, e.s));
+      attachDrag(marker, { kind: "tour", tourIndex: e.ti, stopIndex: e.k });
+    } else {
+      const u = e.u;
+      marker = L.marker(e.pos, {
+        draggable: true, zIndexOffset: 1000, title: u.order_id,
+        icon: L.divIcon({ className: "", iconSize: [26, 26], iconAnchor: [13, 13],
+                          html: '<div class="unplaced-icon">✕</div>' })
+      }).bindPopup(`<b>${esc(u.order_id)}</b> – ${esc(t("m_unplaced"))}<br>${esc(u.address)}<br>` +
+                   (u.items !== null && u.items !== undefined ? `${esc(t("col_items"))}: ${u.items}<br>` : "") +
+                   `${esc(t(u.reason))}<br><i>${esc(t("unplaced_hint"))}</i>`);
+      attachDrag(marker, { kind: "unplaced", index: e.j });
+    }
+    marker.addTo(layer);
+  }
   renderLegend();
 }
 
@@ -265,7 +328,7 @@ function renderLegend() {
         renderMap();
       });
       box.append(h("label", {}, box_, h("span", { class: "dot", style: `background:${colour(ti)}` }),
-        `${tour.tour_id} · ${tour.stops.length} · ${hhmm(tour.end)}`));
+        `${tour.tour_id} · ${tour.stops.length} · ${tour.items || 0} ${t("items_short")} · ${hhmm(tour.end)}`));
     });
     L.DomEvent.disableClickPropagation(box);
     L.DomEvent.disableScrollPropagation(box);
@@ -324,8 +387,8 @@ function attachDrag(marker, source) {
 }
 
 function snapshot() {
-  return JSON.stringify({ tours: state.tours, unplaced: state.unplaced, csv: state.csv,
-                          manual: [...state.manual] });
+  return JSON.stringify({ tours: state.tours, unplaced: state.unplaced, skipped: state.skipped,
+                          csv: state.csv, manual: [...state.manual], placed: [...state.placed] });
 }
 
 async function moveStop(source, target) {
@@ -343,7 +406,8 @@ async function moveStop(source, target) {
     const u = unplaced.splice(source.index, 1)[0];
     stop = { stop_id: u.order_id, address: u.address, country: u.country, lat: u.lat, lon: u.lon,
              tw_start: u.tw_start, tw_end: u.tw_end,
-             service_min: u.service_min ?? state.settings.service_min, is_new: true };
+             service_min: u.service_min ?? state.settings.service_min, items: u.items ?? null,
+             is_new: true };
   }
   stop.moved = true;
   tours[target.tourIndex].stops.splice(at, 0, stop);
@@ -373,11 +437,81 @@ async function moveStop(source, target) {
   render();
 }
 
+// Placing by hand: for an address the geocoder did not find, the dispatcher
+// clicks the right spot on the map. The stop is then inserted at its
+// cheapest position (a skipped tour stop only into its own tour).
+function startPlacing(kind, index) {
+  state.placing = { kind, index };
+  const entry = state[kind][index];
+  $("placing").replaceChildren(t("placing_hint", { id: entry.order_id, address: entry.address }), " ",
+    Object.assign(h("button", { type: "button" }, t("cancel")), { onclick: stopPlacing }));
+  $("placing").hidden = false;
+  $("map").classList.add("placing");
+  $("map").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function stopPlacing() {
+  state.placing = null;
+  $("placing").hidden = true;
+  $("map").classList.remove("placing");
+}
+
+async function placeAt(latlng) {
+  if (!state.placing) return;
+  const { kind, index } = state.placing;
+  stopPlacing();
+  const before = snapshot();
+  const entry = state[kind][index];
+  const lat = Math.round(latlng.lat * 1e6) / 1e6, lon = Math.round(latlng.lng * 1e6) / 1e6;
+  const unplaced = state.unplaced.filter((_, j) => !(kind === "unplaced" && j === index));
+  const skipped = state.skipped.filter((_, j) => !(kind === "skipped" && j === index));
+  const stop = { stop_id: entry.order_id, address: entry.address, country: entry.country, lat, lon,
+                 tw_start: entry.tw_start, tw_end: entry.tw_end,
+                 service_min: entry.service_min ?? state.settings.service_min,
+                 items: entry.items ?? null, is_new: kind === "unplaced" };
+  try {
+    const response = await fetch("api/insert", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ settings: state.settings, tours: state.tours, stop, unplaced, skipped,
+                             tour_id: kind === "skipped" ? entry.tour_id : null })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || response.status);
+    state.history.push(before);
+    if (data.inserted) {
+      state.tours = data.tours;
+      state.unplaced = unplaced;
+      state.skipped = skipped;
+      state.csv = Object.assign({}, state.csv, data.csv);
+      state.placed.add(stop.stop_id);
+      toast(t("placed_toast", { stop: stop.stop_id, tour: data.tour_id, delta: Math.round(data.delta) }));
+    } else {
+      // No feasible position: keep it as a not-placed order, now with a position,
+      // so that it can be dragged onto a tour by hand.
+      const u = Object.assign({}, entry, { lat, lon, reason: "no_feasible_position", tour_id: "" });
+      if (kind === "unplaced") state.unplaced = state.unplaced.map((x, j) => j === index ? u : x);
+      else { state.skipped = skipped; state.unplaced = [...state.unplaced, u]; }
+      state.placed.add(stop.stop_id);
+      toast(t("not_inserted", { stop: stop.stop_id }));
+    }
+  } catch (e) {
+    showError(t("error") + "\n" + e);
+  }
+  render();
+}
+
+function placeButton(kind, index) {
+  const b = h("button", { type: "button", class: "small-button" }, "📍 " + t("place_on_map"));
+  b.addEventListener("click", () => startPlacing(kind, index));
+  return b;
+}
+
 function undo() {
   const last = state.history.pop();
   if (!last) return;
   const s = JSON.parse(last);
-  Object.assign(state, { tours: s.tours, unplaced: s.unplaced, csv: s.csv, manual: new Set(s.manual) });
+  Object.assign(state, { tours: s.tours, unplaced: s.unplaced, skipped: s.skipped, csv: s.csv,
+                         manual: new Set(s.manual), placed: new Set(s.placed) });
   render();
 }
 
@@ -442,37 +576,43 @@ function renderTables() {
   state.tours.forEach(tr => tr.stops.forEach((s, k) => {
     if (!s.is_new) return;
     newRows.push(h("tr", {}, h("td", {}, s.stop_id), h("td", {}, tr.tour_id), h("td", {}, k),
+      h("td", {}, s.items ?? ""),
       h("td", {}, state.manual.has(s.stop_id) ? t("manual") : (state.deltas[s.stop_id] ?? "")),
       h("td", { class: s.late ? "late" : null }, hhmm(s.arrival))));
   }));
   const left = h("div", {}, h("h2", {}, t("inserted")),
-    table([t("col_order"), t("col_tour"), t("col_pos"), t("col_extra"), t("col_arrival")], newRows));
+    table([t("col_order"), t("col_tour"), t("col_pos"), t("col_items"), t("col_extra"), t("col_arrival")], newRows));
   const right = h("div", {}, h("h2", {}, t("unplaced")),
-    table([t("col_order"), t("col_address"), t("col_reason")],
-      state.unplaced.map(u => h("tr", {}, h("td", {}, u.order_id), h("td", {}, u.address),
-        h("td", {}, t(u.reason))))),
+    table([t("col_order"), t("col_address"), t("col_items"), t("col_reason"), ""],
+      state.unplaced.map((u, j) => h("tr", {}, h("td", {}, u.order_id), h("td", {}, u.address),
+        h("td", {}, u.items ?? ""), h("td", {}, t(u.reason)),
+        h("td", {}, u.lat === null || u.lat === undefined ? placeButton("unplaced", j) : null)))),
     state.unplaced.some(u => u.lat !== null) ? h("p", { class: "small muted" }, t("unplaced_hint")) : null);
   parts.push(h("div", { class: "cols" }, left, right));
 
   if (state.skipped.length) {
     parts.push(h("h2", {}, t("skipped")),
-      table([t("col_tour"), t("col_stop"), t("col_address"), t("col_reason")],
-        state.skipped.map(u => h("tr", {}, h("td", {}, u.tour_id), h("td", {}, u.order_id),
-          h("td", {}, u.address), h("td", {}, t(u.reason))))));
+      table([t("col_tour"), t("col_stop"), t("col_address"), t("col_items"), t("col_reason"), ""],
+        state.skipped.map((u, j) => h("tr", {}, h("td", {}, u.tour_id), h("td", {}, u.order_id),
+          h("td", {}, u.address), h("td", {}, u.items ?? ""), h("td", {}, t(u.reason)),
+          h("td", {}, placeButton("skipped", j))))),
+      h("p", { class: "small muted" }, t("place_hint")));
   }
 
   const all = [];
   state.tours.forEach(tr => tr.stops.forEach((s, k) => {
-    const marks = [s.is_new ? t("new") : "", state.manual.has(s.stop_id) ? t("manual")
+    const marks = [s.is_new ? t("new") : "", state.placed.has(s.stop_id) ? t("placed_short") : "",
+                   state.manual.has(s.stop_id) ? t("manual")
                    : (s.moved && !s.is_new ? t("moved") : "")].filter(Boolean).join(", ");
     const window_ = (s.tw_start !== null || s.tw_end !== null)
       ? `${hhmm(s.tw_start) || "…"}–${hhmm(s.tw_end) || "…"}` : "";
     all.push(h("tr", {}, h("td", {}, tr.tour_id), h("td", {}, k), h("td", {}, s.stop_id),
-      h("td", {}, marks), h("td", {}, s.address), h("td", { class: s.late ? "late" : null }, hhmm(s.arrival)),
+      h("td", {}, marks), h("td", {}, s.address), h("td", {}, s.items ?? ""),
+      h("td", { class: s.late ? "late" : null }, hhmm(s.arrival)),
       h("td", {}, window_), h("td", {}, s.slack ?? "")));
   }));
   parts.push(h("details", {}, h("summary", {}, t("all_tours")),
-    table([t("col_tour"), "#", t("col_stop"), "", t("col_address"), t("col_arrival"),
+    table([t("col_tour"), "#", t("col_stop"), "", t("col_address"), t("col_items"), t("col_arrival"),
            t("col_window"), t("col_slack")], all)));
 
   if (state.geocoding.length) {

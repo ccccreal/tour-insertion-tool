@@ -1,11 +1,11 @@
-order_id,address,country,lat,lon,tw_start,tw_end,service_min
-C1,"54-64 Rue de la Balme, 69003 Lyon",FR,,,,,
-C2,"18 Quai Claude Bernard, 69007 Lyon",FR,,,,,
-C3,"Place des Brotteaux, 69006 Lyon",FR,,,,,
-C4,"8 Avenue Rockefeller, 69008 Lyon",FR,,,,12:00,
-C5,"Place Sathonay, 69001 Lyon",FR,,,,,
-C6,"1 Pl. Gabriel Péri, 69007 Lyon",FR,,,,,
-C7,"13 Rue Pierre Delore, 69008 Lyon",FR,,,,13:00,
-C8,"25-11 Rue du Vercors, 69007 Lyon",FR,,,,,
-C9,"33-25 Rue Vendôme, 69006 Lyon",FR,,,,,
-C10,"202 Rue André Philip, 69003 Lyon",FR,,,08:00,13:00,
+order_id,address,country,lat,lon,tw_start,tw_end,service_min,items
+C1,"54-64 Rue de la Balme, 69003 Lyon",FR,,,,,,2
+C2,"18 Quai Claude Bernard, 69007 Lyon",FR,,,,,,4
+C3,"Place des Brotteaux, 69006 Lyon",FR,,,,,,1
+C4,"8 Avenue Rockefeller, 69008 Lyon",FR,,,,12:00,,1
+C5,"Place Sathonay, 69001 Lyon",FR,,,,,,2
+C6,"1 Pl. Gabriel Péri, 69007 Lyon",FR,,,,,,1
+C7,"13 Rue Pierre Delore, 69008 Lyon",FR,,,,13:00,,1
+C8,"25-11 Rue du Vercors, 69007 Lyon",FR,,,,,,2
+C9,"33-25 Rue Vendôme, 69006 Lyon",FR,,,,,,3
+C10,"202 Rue André Philip, 69003 Lyon",FR,,,08:00,13:00,,1

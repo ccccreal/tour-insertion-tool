@@ -107,3 +107,52 @@ def test_password(monkeypatch):
     assert c.get("/api/health").status_code == 401
     assert c.get("/api/health", auth=("x", "wrong")).status_code == 401
     assert c.get("/api/health", auth=("anyone", "secret")).status_code == 200
+
+
+def test_items_are_read_and_returned(client):
+    tours = (b"tour_id,seq,stop_id,address,lat,lon,tw_start,service_min,items\n"
+             b"A,0,A0,Depot,47.50,8.72,08:00,0,\n"
+             b"A,1,A1,One,47.51,8.73,,,3\n"
+             b"A,2,A2,Depot,47.50,8.72,,0,\n")
+    orders = b"order_id,address,lat,lon,items\nN1,New,47.505,8.725,2\n"
+    body = plan(client, tours, orders).json()
+    stops = {s["stop_id"]: s for s in body["tours"][0]["stops"]}
+    assert stops["A1"]["items"] == 3 and stops["N1"]["items"] == 2
+    assert body["tours"][0]["items"] == 5
+    assert "items" in body["csv"]["tours"].splitlines()[0]
+
+
+def test_insert_endpoint_places_a_stop(client):
+    body = plan(client, (EXAMPLES / "winterthur/tours.csv").read_bytes(),
+                (EXAMPLES / "winterthur/orders.csv").read_bytes()).json()
+    stop = {"stop_id": "X1", "lat": 47.5050, "lon": 8.7400, "service_min": 3,
+            "is_new": True, "items": 4}
+    r = client.post("/api/insert", json={"settings": body["settings"], "tours": body["tours"],
+                                         "stop": stop, "unplaced": []})
+    out = r.json()
+    assert r.status_code == 200 and out["inserted"]
+    all_ids = [s["stop_id"] for t in out["tours"] for s in t["stops"]]
+    assert all_ids.count("X1") == 1
+    # restricted to one tour
+    r = client.post("/api/insert", json={"settings": body["settings"], "tours": body["tours"],
+                                         "stop": stop, "tour_id": "T1",
+                                         "skipped": [{"order_id": "S1", "tour_id": "T2",
+                                                      "address": "Nowhere", "reason": "geocode_not_found"}]})
+    assert r.json()["tour_id"] == "T1"
+    assert "S1" in r.json()["csv"]["skipped"]
+    # impossible time window -> not inserted
+    late = dict(stop, tw_end=481)
+    r = client.post("/api/insert", json={"settings": body["settings"], "tours": body["tours"],
+                                         "stop": late})
+    assert r.json() == {"inserted": False}
+    # same id twice -> 400
+    dup = dict(stop, stop_id="T1-01")
+    assert client.post("/api/insert", json={"tours": body["tours"], "stop": dup}).status_code == 400
+
+
+def test_geocode_failure_keeps_details_for_manual_placing(client):
+    orders = ("order_id,address,country,tw_end,service_min,items\n"
+              "N9,\"Unknown, 69002 Lyon\",FR,10:00,5,7\n").encode()
+    body = plan(client, (EXAMPLES / "winterthur/tours.csv").read_bytes(), orders).json()
+    u = body["unplaced"][0]
+    assert (u["order_id"], u["lat"], u["tw_end"], u["service_min"], u["items"]) == ("N9", None, 600, 5, 7)

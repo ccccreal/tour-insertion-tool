@@ -43,11 +43,16 @@ class Unplaced:
     tw_start: int | None = None
     tw_end: int | None = None
     tour_id: str = ""          # set for skipped stops of an existing tour
+    # kept so the stop can still be placed by hand (e.g. on the map)
+    service_min: int | None = None
+    items: int | None = None
+    country: str = ""
 
     @classmethod
     def from_stop(cls, stop: Stop, reason: str) -> Unplaced:
         return cls(stop.stop_id, stop.address, reason, stop,
-                   stop.tw_start, stop.tw_end)
+                   stop.tw_start, stop.tw_end, "", stop.service_min,
+                   stop.items, stop.country)
 
 
 @dataclass

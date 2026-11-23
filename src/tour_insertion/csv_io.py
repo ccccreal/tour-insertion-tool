@@ -1,12 +1,13 @@
 """Read tours and orders from CSV, write results to CSV.
 
 tours.csv   tour_id, seq, stop_id, address, country, lat, lon,
-            tw_start, tw_end, service_min
+            tw_start, tw_end, service_min, items
 orders.csv  order_id, address, country, lat, lon, tw_start, tw_end,
-            service_min
+            service_min, items
 
 Times are "HH:MM". Empty cells are allowed for address, country, tw_start,
-tw_end and service_min (then the default service time is used).
+tw_end, service_min (then the default service time is used) and items
+(number of items/parcels at the stop, only shown, not planned with).
 lat/lon may be empty: then the address is geocoded (see geocoding.py).
 """
 
@@ -48,6 +49,11 @@ def _stop_from_row(row: dict[str, str], id_column: str, default_service: int,
         raise ValueError(f"{where}: stop {stop_id!r} has no lat/lon "
                          "(geocode first)")
     service = (row.get("service_min") or "").strip()
+    try:
+        service_min = int(service) if service else default_service
+        items = parse_items(row.get("items"))
+    except ValueError as error:
+        raise ValueError(f"{where}: {error}") from None
     return Stop(
         stop_id=stop_id,
         lat=float(lat),
@@ -56,9 +62,37 @@ def _stop_from_row(row: dict[str, str], id_column: str, default_service: int,
         country=(row.get("country") or "").strip().upper(),
         tw_start=parse_time(row.get("tw_start")),
         tw_end=parse_time(row.get("tw_end")),
-        service_min=int(service) if service else default_service,
+        service_min=service_min,
         is_new=is_new,
+        items=items,
     )
+
+
+def parse_items(text: str | None) -> int | None:
+    """'3' -> 3, '' -> None. Number of items (parcels) at a stop."""
+    if text is None or not str(text).strip():
+        return None
+    value = int(str(text).strip())
+    if value < 0:
+        raise ValueError(f"items must not be negative, got {value}")
+    return value
+
+
+def unplaced_from_row(row: dict[str, str], id_column: str, reason: str,
+                      default_service: int, tour_id: str = "") -> Unplaced:
+    """An Unplaced for a row that never became a Stop (no coordinates),
+    keeping everything needed to place it by hand later."""
+    service = (row.get("service_min") or "").strip()
+    try:
+        items = parse_items(row.get("items"))
+        service_min = int(service) if service else default_service
+    except ValueError:
+        items, service_min = None, default_service
+    return Unplaced((row.get(id_column) or "").strip(),
+                    (row.get("address") or "").strip(), reason, None,
+                    parse_time(row.get("tw_start")), parse_time(row.get("tw_end")),
+                    tour_id, service_min, items,
+                    (row.get("country") or "").strip().upper())
 
 
 def read_rows(source: str | Path | IO[str], name: str | None = None
@@ -125,8 +159,8 @@ def read_orders(path: str | Path, default_service: int = 3) -> list[Stop]:
 
 
 TOUR_COLUMNS = ["tour_id", "seq", "stop_id", "is_new", "moved", "address",
-                "country", "lat", "lon", "arrival", "departure", "tw_start",
-                "tw_end", "slack_min"]
+                "country", "lat", "lon", "items", "arrival", "departure",
+                "tw_start", "tw_end", "slack_min"]
 
 
 def schedules_to_csv(schedules: list[Schedule],
@@ -144,6 +178,7 @@ def schedules_to_csv(schedules: list[Schedule],
                 "moved": int(s.stop_id in moved),
                 "address": s.address, "country": s.country,
                 "lat": s.lat, "lon": s.lon,
+                "items": "" if s.items is None else s.items,
                 "arrival": format_time(t.arrival),
                 "departure": format_time(t.departure),
                 "tw_start": format_time(s.tw_start),
@@ -156,10 +191,10 @@ def schedules_to_csv(schedules: list[Schedule],
 def unplaced_to_csv(unplaced: list[Unplaced]) -> str:
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\n")
-    writer.writerow(["order_id", "address", "tw_start", "tw_end", "reason"])
+    writer.writerow(["order_id", "address", "items", "tw_start", "tw_end", "reason"])
     for u in unplaced:
-        writer.writerow([u.order_id, u.address, format_time(u.tw_start),
-                         format_time(u.tw_end), u.reason])
+        writer.writerow([u.order_id, u.address, "" if u.items is None else u.items,
+                         format_time(u.tw_start), format_time(u.tw_end), u.reason])
     return out.getvalue()
 
 

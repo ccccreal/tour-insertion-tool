@@ -46,11 +46,18 @@ uv run tour-insert-server        # opens on http://localhost:8000
 - `src/tour_insertion/server.py`: web API (FastAPI) around the planning
   core. It keeps no state; the page holds the current plan.
   `POST /api/plan` plans, `POST /api/schedule` recomputes times after a
-  manual move. API docs: `/api/docs`.
+  manual move, `POST /api/insert` inserts one stop placed by hand.
+  API docs: `/api/docs`.
 - `web/`: the page (plain JavaScript, Leaflet map, no build step).
 - Drag & drop: drop a stop (or an order marked ✕ that fits nowhere) on a
   tour line; it goes between the two stops of that line, both tours are
   recomputed, stops after their time window turn red, *Undo* goes back.
+- Stops at the same spot are spread on a small circle around it (a thin
+  line points to the real position), so each one can be seen and dragged.
+- Address not found: *Place on map*, then click the right spot. A new
+  order goes to its cheapest feasible position in any tour, a skipped tour
+  stop to the cheapest position in its own tour (its original position is
+  not kept). If nothing fits, it stays as ✕ and can be dragged by hand.
 - `TOOL_PASSWORD=...` asks for a password (HTTP Basic auth).
   `TOOL_GEOCODE_CACHE` sets the cache file.
 
@@ -85,6 +92,7 @@ drop). It still runs the demo on Streamlit Community Cloud (main file path
 | lat, lon | WGS84 coordinates; if empty, the address is geocoded |
 | tw_start, tw_end | time window `HH:MM`, optional |
 | service_min | minutes at the stop, optional (default `--service-min`) |
+| items | number of parcels/items unloaded at the stop, optional; shown only, no capacity check |
 
 `orders.csv`: same columns, with `order_id` instead of `tour_id, seq, stop_id`.
 

@@ -110,7 +110,30 @@ const TEXT = {
   geocode_not_found: { de: "Adresse nicht gefunden", fr: "adresse introuvable", en: "address not found" },
   geocode_uncertain: { de: "Adresse unsicher, bitte prüfen", fr: "adresse incertaine, à vérifier", en: "address uncertain, please check" },
   no_tours: { de: "keine Touren vorhanden", fr: "aucune tournée", en: "no tours" },
-  moved_by_hand: { de: "von Hand verschoben", fr: "déplacé à la main", en: "moved by hand" }
+  moved_by_hand: { de: "von Hand verschoben", fr: "déplacé à la main", en: "moved by hand" },
+  col_items: { de: "Items", fr: "Colis", en: "Items" },
+  items_short: { de: "Items", fr: "colis", en: "items" },
+  depot: { de: "Depot", fr: "Dépôt", en: "Depot" },
+  place_on_map: { de: "Auf Karte setzen", fr: "Placer sur la carte", en: "Place on map" },
+  place_hint: {
+    de: "Mit «Auf Karte setzen» klickst du die richtige Stelle auf der Karte an. Der Stopp wird dann in seine Tour eingefügt, wo er am wenigsten Umweg kostet.",
+    fr: "Avec « Placer sur la carte », cliquez sur le bon endroit de la carte. L'arrêt est alors inséré dans sa tournée là où il coûte le moins de détour.",
+    en: "With “Place on map” you click the right spot on the map. The stop is then inserted into its tour where it costs the least detour."
+  },
+  placing_hint: {
+    de: "Klicke auf der Karte die Position von {id} ({address}) an. Esc bricht ab.",
+    fr: "Cliquez sur la carte à l'emplacement de {id} ({address}). Échap pour annuler.",
+    en: "Click the position of {id} ({address}) on the map. Esc cancels."
+  },
+  cancel: { de: "Abbrechen", fr: "Annuler", en: "Cancel" },
+  placed_by_hand: { de: "Position von Hand gesetzt", fr: "position placée à la main", en: "position set by hand" },
+  placed_short: { de: "Position von Hand", fr: "position manuelle", en: "position by hand" },
+  placed_toast: { de: "{stop} in {tour} eingefügt (+{delta} min).", fr: "{stop} inséré dans {tour} (+{delta} min).", en: "{stop} inserted into {tour} (+{delta} min)." },
+  not_inserted: {
+    de: "{stop} passt in keine Tour. Er bleibt als ✕ auf der Karte und kann von Hand auf eine Tour gezogen werden.",
+    fr: "{stop} n'entre dans aucune tournée. Il reste en ✕ sur la carte et peut être glissé sur une tournée.",
+    en: "{stop} fits no tour. It stays as ✕ on the map and can be dragged onto a tour by hand."
+  }
 };
 
 let LANG = "de";

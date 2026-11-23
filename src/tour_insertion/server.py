@@ -45,7 +45,7 @@ from tour_insertion.feasibility import late_stops
 from tour_insertion.geocoding import Geocoder
 from tour_insertion.model import Schedule, Stop, Tour
 from tour_insertion.pipeline import InputError, RunResult, Settings, make_geocoder, run
-from tour_insertion.planner import Unplaced
+from tour_insertion.planner import Unplaced, insert_orders
 from tour_insertion.schedule import forward_pass
 from tour_insertion.traveltime import CrowFlyModel
 
@@ -83,7 +83,8 @@ def stop_from_json(d: dict) -> Stop:
                     address=d.get("address") or "", country=d.get("country") or "",
                     tw_start=d.get("tw_start"), tw_end=d.get("tw_end"),
                     service_min=int(d.get("service_min") or 0),
-                    is_new=bool(d.get("is_new")))
+                    is_new=bool(d.get("is_new")),
+                    items=None if d.get("items") in (None, "") else int(d["items"]))
     except (KeyError, TypeError, ValueError) as error:
         raise InputError(f"bad stop {d!r}: {error}") from error
 
@@ -93,6 +94,7 @@ def schedule_json(s: Schedule, tolerance_min: int,
     late = late_stops(s, tolerance_min)
     return {
         "tour_id": s.tour.tour_id,
+        "items": sum(t.stop.items or 0 for t in s.times),
         "start": s.times[0].arrival if s.times else None,
         "end": s.end,
         "duration": s.duration,
@@ -101,6 +103,7 @@ def schedule_json(s: Schedule, tolerance_min: int,
             "country": t.stop.country, "lat": t.stop.lat, "lon": t.stop.lon,
             "tw_start": t.stop.tw_start, "tw_end": t.stop.tw_end,
             "service_min": t.stop.service_min, "is_new": t.stop.is_new,
+            "items": t.stop.items,
             "arrival": t.arrival, "departure": t.departure,
             "arrival_hhmm": format_time(t.arrival), "slack": t.slack,
             "late": t.stop.stop_id in late, "moved": t.stop.stop_id in moved,
@@ -111,10 +114,11 @@ def schedule_json(s: Schedule, tolerance_min: int,
 def unplaced_json(u: Unplaced) -> dict:
     d = {"order_id": u.order_id, "address": u.address, "reason": u.reason,
          "tour_id": u.tour_id, "tw_start": u.tw_start, "tw_end": u.tw_end,
-         "lat": None, "lon": None, "country": "", "service_min": None}
+         "lat": None, "lon": None, "country": u.country,
+         "service_min": u.service_min, "items": u.items}
     if u.stop is not None:
         d.update(lat=u.stop.lat, lon=u.stop.lon, country=u.stop.country,
-                 service_min=u.stop.service_min)
+                 service_min=u.stop.service_min, items=u.stop.items)
     return d
 
 
@@ -124,7 +128,8 @@ def unplaced_from_json(d: dict) -> Unplaced:
         stop = stop_from_json({**d, "stop_id": d.get("order_id"), "is_new": True})
     return Unplaced(str(d.get("order_id") or ""), d.get("address") or "",
                     d.get("reason") or "", stop, d.get("tw_start"), d.get("tw_end"),
-                    d.get("tour_id") or "")
+                    d.get("tour_id") or "", d.get("service_min"), d.get("items"),
+                    d.get("country") or "")
 
 
 def result_json(r: RunResult, settings: Settings) -> dict:
@@ -256,6 +261,47 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
                       for sc in schedules],
             "csv": {"tours": schedules_to_csv(schedules, frozenset(moved)),
                     "unplaced": unplaced_to_csv(unplaced)},
+        }
+
+    @app.post("/api/insert")
+    def insert(body: dict):
+        """Insert ONE stop at its cheapest feasible position.
+
+        body: {settings, tours, stop: {stop_id, lat, lon, ...},
+               tour_id: only this tour (optional), unplaced: [...], skipped: [...]}
+        Used when the dispatcher places a stop by clicking on the map.
+        Returns {"inserted": false} if no tour has a feasible position.
+        """
+        s = settings_from_json(body.get("settings"))
+        model = CrowFlyModel(s.detour_factor, s.speed_m_per_min)
+        tours, moved = {}, set()
+        for t in body.get("tours") or []:
+            tours[str(t.get("tour_id"))] = Tour(
+                str(t.get("tour_id")), tuple(stop_from_json(d) for d in t.get("stops") or []))
+            moved |= {d["stop_id"] for d in t.get("stops") or [] if d.get("moved")}
+        new_stop = stop_from_json(body.get("stop") or {})
+        only = body.get("tour_id")
+        candidates = {only: tours[only]} if only in tours else tours
+        try:
+            result = insert_orders(candidates, [new_stop], model,
+                                   fixed_first=not s.open_start, fixed_last=not s.open_end,
+                                   tolerance_min=s.tolerance_min)
+        except ValueError as error:                   # e.g. id already in a tour
+            raise InputError(str(error)) from error
+        if not result.inserted:
+            return {"inserted": False}
+        tours.update(result.tours)
+        moved.add(new_stop.stop_id)
+        schedules = [forward_pass(tours[t], model) for t in tours]
+        unplaced = [unplaced_from_json(d) for d in body.get("unplaced") or []]
+        skipped = [unplaced_from_json(d) for d in body.get("skipped") or []]
+        option = result.inserted[0]
+        return {
+            "inserted": True, "tour_id": option.tour_id, "delta": round(option.delta, 1),
+            "tours": [schedule_json(sc, s.tolerance_min, frozenset(moved)) for sc in schedules],
+            "csv": {"tours": schedules_to_csv(schedules, frozenset(moved)),
+                    "unplaced": unplaced_to_csv(unplaced),
+                    "skipped": skipped_to_csv(skipped)},
         }
 
     if WEB.exists():

@@ -26,6 +26,8 @@ class Stop:
     tw_start   earliest start of service; arriving earlier means waiting
     tw_end     latest start of service; None = no limit
     is_new     True for stops inserted by this tool (overnight orders)
+    items      number of items (parcels) dropped at this stop; only shown,
+               not used in the planning (no capacities). None = not given
     """
 
     stop_id: str
@@ -37,6 +39,7 @@ class Stop:
     tw_end: int | None = None
     service_min: int = 0
     is_new: bool = False
+    items: int | None = None
 
     @property
     def point(self) -> Point:

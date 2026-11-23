@@ -104,3 +104,10 @@ main details > summary { cursor: pointer; margin: 16px 0 8px; font-size: 17px; }
   .uploads, .cols { grid-template-columns: 1fr; }
   .metrics { grid-template-columns: repeat(2, 1fr); }
 }
+
+/* Placing a stop by clicking on the map */
+.placing-banner { background: #3a3000; border: 1px solid var(--accent, #f5b800); color: #fff;
+                  padding: 8px 12px; border-radius: 6px; margin-bottom: 8px; }
+.placing-banner button { margin-left: 8px; }
+#map.placing, #map.placing .leaflet-interactive { cursor: crosshair; }
+.small-button { padding: 2px 8px; font-size: 12px; white-space: nowrap; }

@@ -22,7 +22,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from tour_insertion.csv_io import orders_from_rows, tours_from_rows
+from tour_insertion.csv_io import orders_from_rows, tours_from_rows, unplaced_from_row
 from tour_insertion.geocoding import (NOT_FOUND, FranceGeocoder,
                                       GeocodeResult, Geocoder, SwissGeocoder,
                                       fill_coordinates, needs_geocoding)
@@ -114,7 +114,7 @@ def _depot_rows(tour_rows: list[dict]) -> set[int]:
 
 
 def geocode_rows(tour_rows: list[dict], order_rows: list[dict],
-                 geocoder: Geocoder
+                 geocoder: Geocoder, default_service: int = 3
                  ) -> tuple[list[GeocodeResult], list[Unplaced], list[Unplaced]]:
     """Fill missing coordinates (rows are changed in place).
 
@@ -143,12 +143,11 @@ def geocode_rows(tour_rows: list[dict], order_rows: list[dict],
                          "geocoded reliably. Fix the address or add lat/lon:\n"
                          + lines)
 
-    skipped = [Unplaced((r.get("stop_id") or "").strip(), r["address"].strip(),
-                        _reason(by_query.get(r["address"].strip())),
-                        tour_id=(r.get("tour_id") or "").strip())
+    skipped = [unplaced_from_row(r, "stop_id", _reason(by_query.get(r["address"].strip())),
+                                 default_service, (r.get("tour_id") or "").strip())
                for r in tour_rows if needs_geocoding(r)]
-    unplaced = [Unplaced((r.get("order_id") or "").strip(), r["address"].strip(),
-                         _reason(by_query.get(r["address"].strip())))
+    unplaced = [unplaced_from_row(r, "order_id", _reason(by_query.get(r["address"].strip())),
+                                  default_service)
                 for r in order_rows if needs_geocoding(r)]
     return tour_results + order_results, unplaced, skipped
 
@@ -161,7 +160,8 @@ def run(tour_rows: list[dict], order_rows: list[dict], settings: Settings,
         raise InputError("the tours file is empty")
     try:
         geo_results, geo_unplaced, skipped = geocode_rows(
-            tour_rows, order_rows, geocoder or make_geocoder(settings))
+            tour_rows, order_rows, geocoder or make_geocoder(settings),
+            settings.service_min)
         tours = tours_from_rows([r for r in tour_rows if not needs_geocoding(r)],
                                 settings.service_min)
         orders = orders_from_rows([r for r in order_rows if not needs_geocoding(r)],
