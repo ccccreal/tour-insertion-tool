@@ -231,6 +231,17 @@ const SAME_SPOT_DIGITS = 5;            // ~1 m: same rounded position = same spo
 
 function spotKey(lat, lon) { return lat.toFixed(SAME_SPOT_DIGITS) + "," + lon.toFixed(SAME_SPOT_DIGITS); }
 
+// Radius of the circle in pixels. Zoomed out: just wide enough that the
+// markers do not cover each other (neighbours ~24 px apart). Zoomed in:
+// the wider circle as before, so the lines to the real position are easy
+// to see. In between, linear.
+function spreadRadius(n) {
+  const tight = 12 / Math.sin(Math.PI / n);
+  const wide = Math.max(tight, 18 + 4 * n);
+  const f = Math.min(1, Math.max(0, (map.getZoom() - 13) / 3));   // 0 at zoom <= 13, 1 at zoom >= 16
+  return tight + f * (wide - tight);
+}
+
 function spreadPositions(entries) {
   const groups = new Map();
   entries.forEach(e => {
@@ -241,7 +252,7 @@ function spreadPositions(entries) {
   for (const group of groups.values()) {
     if (group.length === 1) { group[0].pos = [group[0].lat, group[0].lon]; continue; }
     const centre = map.latLngToLayerPoint([group[0].lat, group[0].lon]);
-    const radius = 18 + 4 * group.length;
+    const radius = spreadRadius(group.length);
     group.forEach((e, i) => {
       const angle = -Math.PI / 2 + 2 * Math.PI * i / group.length;
       const p = L.point(centre.x + radius * Math.cos(angle), centre.y + radius * Math.sin(angle));
