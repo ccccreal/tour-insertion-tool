@@ -125,6 +125,7 @@ const TEXT = {
     fr: "Cliquez sur la carte à l'emplacement de {id} ({address}). Échap pour annuler.",
     en: "Click the position of {id} ({address}) on the map. Esc cancels."
   },
+  all_placed: { de: "Alle Aufträge und Tour-Stopps sind eingeplant.", fr: "Toutes les commandes et tous les arrêts sont planifiés.", en: "All orders and tour stops are planned." },
   cancel: { de: "Abbrechen", fr: "Annuler", en: "Cancel" },
   placed_by_hand: { de: "Position von Hand gesetzt", fr: "position placée à la main", en: "position set by hand" },
   placed_short: { de: "Position von Hand", fr: "position manuelle", en: "position by hand" },

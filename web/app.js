@@ -541,6 +541,7 @@ function render() {
   renderMetrics();
   renderWarnings();
   renderMap();
+  renderOpen();
   renderTables();
   renderDownloads();
   $("undo").disabled = state.history.length === 0;
@@ -568,6 +569,36 @@ function renderWarnings() {
   $("warnings").replaceChildren(...items);
 }
 
+// Orders not placed and skipped tour stops sit right under the map, so that
+// none of them is forgotten while planning.
+function renderOpen() {
+  const parts = [];
+  if (!state.plan) { $("open").replaceChildren(); return; }
+  if (!state.unplaced.length && !state.skipped.length) {
+    $("open").replaceChildren(h("div", { class: "open-done" }, "✓ " + t("all_placed")));
+    return;
+  }
+  if (state.unplaced.length) {
+    parts.push(h("h3", {}, `${t("unplaced")} (${state.unplaced.length})`),
+      table([t("col_order"), t("col_address"), t("col_items"), t("col_reason"), ""],
+        state.unplaced.map((u, j) => h("tr", {}, h("td", {}, u.order_id), h("td", {}, u.address),
+          h("td", {}, u.items ?? ""), h("td", {}, t(u.reason)),
+          h("td", {}, u.lat === null || u.lat === undefined ? placeButton("unplaced", j) : null)))),
+      state.unplaced.some(u => u.lat !== null && u.lat !== undefined)
+        ? h("p", { class: "small muted" }, t("unplaced_hint")) : null);
+  }
+  if (state.skipped.length) {
+    parts.push(h("h3", {}, `${t("skipped")} (${state.skipped.length})`),
+      table([t("col_tour"), t("col_stop"), t("col_address"), t("col_items"), t("col_reason"), ""],
+        state.skipped.map((u, j) => h("tr", {}, h("td", {}, u.tour_id), h("td", {}, u.order_id),
+          h("td", {}, u.address), h("td", {}, u.items ?? ""), h("td", {}, t(u.reason)),
+          h("td", {}, placeButton("skipped", j))))));
+  }
+  if (state.unplaced.some(u => u.lat === null || u.lat === undefined) || state.skipped.length)
+    parts.push(h("p", { class: "small muted" }, t("place_hint")));
+  $("open").replaceChildren(h("div", { class: "open-box" }, parts));
+}
+
 function renderTables() {
   const parts = [];
 
@@ -591,24 +622,8 @@ function renderTables() {
       h("td", {}, state.manual.has(s.stop_id) ? t("manual") : (state.deltas[s.stop_id] ?? "")),
       h("td", { class: s.late ? "late" : null }, hhmm(s.arrival))));
   }));
-  const left = h("div", {}, h("h2", {}, t("inserted")),
+  parts.push(h("h2", {}, t("inserted")),
     table([t("col_order"), t("col_tour"), t("col_pos"), t("col_items"), t("col_extra"), t("col_arrival")], newRows));
-  const right = h("div", {}, h("h2", {}, t("unplaced")),
-    table([t("col_order"), t("col_address"), t("col_items"), t("col_reason"), ""],
-      state.unplaced.map((u, j) => h("tr", {}, h("td", {}, u.order_id), h("td", {}, u.address),
-        h("td", {}, u.items ?? ""), h("td", {}, t(u.reason)),
-        h("td", {}, u.lat === null || u.lat === undefined ? placeButton("unplaced", j) : null)))),
-    state.unplaced.some(u => u.lat !== null) ? h("p", { class: "small muted" }, t("unplaced_hint")) : null);
-  parts.push(h("div", { class: "cols" }, left, right));
-
-  if (state.skipped.length) {
-    parts.push(h("h2", {}, t("skipped")),
-      table([t("col_tour"), t("col_stop"), t("col_address"), t("col_items"), t("col_reason"), ""],
-        state.skipped.map((u, j) => h("tr", {}, h("td", {}, u.tour_id), h("td", {}, u.order_id),
-          h("td", {}, u.address), h("td", {}, u.items ?? ""), h("td", {}, t(u.reason)),
-          h("td", {}, placeButton("skipped", j))))),
-      h("p", { class: "small muted" }, t("place_hint")));
-  }
 
   const all = [];
   state.tours.forEach(tr => tr.stops.forEach((s, k) => {

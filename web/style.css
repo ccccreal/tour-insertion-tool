@@ -111,3 +111,9 @@ main details > summary { cursor: pointer; margin: 16px 0 8px; font-size: 17px; }
 .placing-banner button { margin-left: 8px; }
 #map.placing, #map.placing .leaflet-interactive { cursor: crosshair; }
 .small-button { padding: 2px 8px; font-size: 12px; white-space: nowrap; }
+
+/* Open items right under the map: orders not placed, skipped tour stops */
+#open { margin: 12px 0 4px; }
+.open-box { border: 1px solid #d7263d; border-left-width: 4px; border-radius: 8px; padding: 4px 16px 10px; }
+.open-box h3 { margin: 12px 0 6px; font-size: 1rem; color: #ff6b7a; }
+.open-done { color: #3ecf8e; padding: 6px 0; }
