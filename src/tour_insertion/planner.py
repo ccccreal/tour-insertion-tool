@@ -49,12 +49,16 @@ class Unplaced:
     items: int | None = None
     country: str = ""
     kind: str = "drop"
+    name: str = ""
+    quantities: tuple[tuple[str, int], ...] = ()
+    info: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def from_stop(cls, stop: Stop, reason: str) -> Unplaced:
         return cls(stop.stop_id, stop.address, reason, stop,
                    stop.tw_start, stop.tw_end, "", stop.service_min,
-                   stop.items, stop.country, stop.kind)
+                   stop.items, stop.country, stop.kind, stop.name,
+                   stop.quantities, stop.info)
 
 
 @dataclass

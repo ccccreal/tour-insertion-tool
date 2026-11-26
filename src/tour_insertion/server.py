@@ -10,8 +10,14 @@ Endpoints (all JSON unless noted):
   GET  /api/examples                names of the example data sets
   GET  /api/examples/{name}/{kind}  CSV text, kind = tours | orders
   GET  /api/templates/{kind}        CSV template to download
-  POST /api/plan                    form: tours (file), orders (file),
-                                    settings (JSON text) -> full result
+  POST /api/plan                    form: tours (file, optional), orders
+                                    (file), settings (JSON text), template
+                                    (JSON text, optional) -> full result.
+                                    Without tours: plan from scratch.
+  POST /api/inspect                 form: file -> sheets, columns, preview
+                                    and a guessed template (Excel import)
+  GET  /api/plan-examples           stop lists for planning from scratch
+  GET  /api/plan-examples/{name}/{part}  part = stops (file) | template
   POST /api/schedule                {settings, tours, unplaced} -> times,
                                     late stops and CSV for tours in a given
                                     order (used after drag & drop)
@@ -39,6 +45,7 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Res
 from fastapi.staticfiles import StaticFiles
 
 from tour_insertion.csv_io import (format_time, geocoding_to_csv, parse_kind, read_rows_text,
+                                   unplaced_from_row,
                                    schedules_to_csv, skipped_to_csv,
                                    unplaced_to_csv)
 from tour_insertion.feasibility import late_stops
@@ -46,7 +53,9 @@ from tour_insertion.load import load_after, max_load, over_capacity
 from tour_insertion.geocoding import Geocoder
 from tour_insertion.model import Schedule, Stop, Tour
 from tour_insertion.pipeline import (DEFAULT_VEHICLES, InputError, RunResult, Settings,
-                                     apply_vehicles, make_geocoder, run)
+                                     apply_vehicles, make_geocoder, plan_new, run)
+from tour_insertion.stop_import import REASON_NO_ADDRESS, Template, inspect
+from tour_insertion.stop_import import order_rows as import_rows
 from tour_insertion.planner import Unplaced, insert_orders
 from tour_insertion.schedule import forward_pass
 from tour_insertion.traveltime import CrowFlyModel
@@ -62,6 +71,8 @@ EXAMPLES = {
     "paris": ("paris/tours_paris_2.csv", "paris/orders_paris_2.csv"),
 }
 TEMPLATES = {"tours": "lyon/tours.csv", "orders": "lyon/orders.csv"}
+#: Stop lists for planning from scratch: examples/<name>/stops.xlsx + template.json
+PLAN_EXAMPLES = ("praxen", "standorte")
 MAX_UPLOAD_BYTES = 2_000_000
 
 
@@ -101,7 +112,11 @@ def vehicles_from_json(data) -> dict:
             raise InputError(f"bad vehicle {name!r}: {error}") from error
         if (capacity is not None and capacity < 0) or (speed is not None and speed <= 0):
             raise InputError(f"bad vehicle {name!r}: capacity >= 0 and speed > 0 needed")
-        out[name] = {"capacity": capacity, "speed_kmh": speed}
+        try:
+            count = int(spec.get("count") or 0)
+        except (TypeError, ValueError) as error:
+            raise InputError(f"bad vehicle {name!r}: count must be a whole number") from error
+        out[name] = {"capacity": capacity, "speed_kmh": speed, "count": max(count, 0)}
     return out
 
 
@@ -113,7 +128,9 @@ def stop_from_json(d: dict) -> Stop:
                     service_min=int(d.get("service_min") or 0),
                     is_new=bool(d.get("is_new")),
                     items=None if d.get("items") in (None, "") else int(d["items"]),
-                    kind=parse_kind(d.get("kind")))
+                    kind=parse_kind(d.get("kind")), name=str(d.get("name") or ""),
+                    quantities=tuple((str(k), int(v)) for k, v in (d.get("quantities") or {}).items()),
+                    info=tuple((str(k), str(v)) for k, v in (d.get("info") or {}).items()))
     except (KeyError, TypeError, ValueError) as error:
         raise InputError(f"bad stop {d!r}: {error}") from error
 
@@ -144,6 +161,7 @@ def schedule_json(s: Schedule, tolerance_min: int,
         "max_load": max_load(stops),
         "over_capacity": over_capacity(s.tour),
         "items": sum(t.stop.items or 0 for t in s.times),
+        "quantities": totals(t.stop for t in s.times),
         "start": s.times[0].arrival if s.times else None,
         "end": s.end,
         "duration": s.duration,
@@ -153,6 +171,8 @@ def schedule_json(s: Schedule, tolerance_min: int,
             "tw_start": t.stop.tw_start, "tw_end": t.stop.tw_end,
             "service_min": t.stop.service_min, "is_new": t.stop.is_new,
             "items": t.stop.items, "kind": t.stop.kind, "load": load,
+            "name": t.stop.name, "quantities": dict(t.stop.quantities),
+            "info": dict(t.stop.info),
             "arrival": t.arrival, "departure": t.departure,
             "arrival_hhmm": format_time(t.arrival), "slack": t.slack,
             "late": t.stop.stop_id in late, "moved": t.stop.stop_id in moved,
@@ -164,7 +184,8 @@ def unplaced_json(u: Unplaced) -> dict:
     d = {"order_id": u.order_id, "address": u.address, "reason": u.reason,
          "tour_id": u.tour_id, "tw_start": u.tw_start, "tw_end": u.tw_end,
          "lat": None, "lon": None, "country": u.country,
-         "service_min": u.service_min, "items": u.items, "kind": u.kind}
+         "service_min": u.service_min, "items": u.items, "kind": u.kind,
+         "name": u.name, "quantities": dict(u.quantities), "info": dict(u.info)}
     if u.stop is not None:
         d.update(lat=u.stop.lat, lon=u.stop.lon, country=u.stop.country,
                  service_min=u.stop.service_min, items=u.stop.items, kind=u.stop.kind)
@@ -178,12 +199,25 @@ def unplaced_from_json(d: dict) -> Unplaced:
     return Unplaced(str(d.get("order_id") or ""), d.get("address") or "",
                     d.get("reason") or "", stop, d.get("tw_start"), d.get("tw_end"),
                     d.get("tour_id") or "", d.get("service_min"), d.get("items"),
-                    d.get("country") or "", parse_kind(d.get("kind")))
+                    d.get("country") or "", parse_kind(d.get("kind")),
+                    str(d.get("name") or ""),
+                    tuple((str(k), int(v)) for k, v in (d.get("quantities") or {}).items()),
+                    tuple((str(k), str(v)) for k, v in (d.get("info") or {}).items()))
 
 
-def result_json(r: RunResult, settings: Settings) -> dict:
+def totals(stops) -> dict[str, int]:
+    """Quantity per product over some stops, e.g. {"Box 50er": 14}."""
+    out: dict[str, int] = {}
+    for s in stops:
+        for name, n in s.quantities:
+            out[name] = out.get(name, 0) + n
+    return out
+
+
+def result_json(r: RunResult, settings: Settings, mode: str = "insert") -> dict:
     moved = r.moved
     return {
+        "mode": mode,
         "settings": asdict(settings),
         "tours": [schedule_json(s, settings.tolerance_min, moved) for s in r.schedules],
         "inserted": [{"order_id": o.stop_id, "tour_id": o.tour_id,
@@ -283,10 +317,42 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
         return FileResponse(ROOT / "examples" / TEMPLATES[kind], media_type="text/csv",
                             filename=f"{kind}_template.csv")
 
-    async def read_upload(upload: UploadFile) -> str:
+    @app.get("/api/plan-examples")
+    def plan_examples():
+        out = []
+        for name in PLAN_EXAMPLES:
+            folder = ROOT / "examples" / name
+            if (folder / "stops.xlsx").exists() and (folder / "template.json").exists():
+                t = json.loads((folder / "template.json").read_text(encoding="utf-8"))
+                out.append({"name": name, "title": t.get("title", name), "template": t})
+        return out
+
+    @app.get("/api/plan-examples/{name}/{part}")
+    def plan_example(name: str, part: str):
+        if name not in PLAN_EXAMPLES or part not in ("stops", "template"):
+            raise HTTPException(404)
+        folder = ROOT / "examples" / name
+        if part == "template":
+            return json.loads((folder / "template.json").read_text(encoding="utf-8"))
+        return FileResponse(folder / "stops.xlsx", filename=f"{name}.xlsx",
+                            media_type="application/vnd.openxmlformats-officedocument."
+                                       "spreadsheetml.sheet")
+
+    @app.post("/api/inspect")
+    async def inspect_file(file: UploadFile = File(...)):
+        try:
+            return inspect(await read_bytes(file), file.filename or "upload")
+        except ValueError as error:
+            raise InputError(str(error)) from error
+
+    async def read_bytes(upload: UploadFile) -> bytes:
         raw = await upload.read(MAX_UPLOAD_BYTES + 1)
         if len(raw) > MAX_UPLOAD_BYTES:
             raise InputError(f"{upload.filename}: file too large (max 2 MB)")
+        return raw
+
+    async def read_upload(upload: UploadFile) -> str:
+        raw = await read_bytes(upload)
         try:
             return raw.decode("utf-8-sig")
         except UnicodeDecodeError as error:
@@ -294,15 +360,33 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
                              "UTF-8 and try again.") from error
 
     @app.post("/api/plan")
-    async def plan(tours: UploadFile = File(...), orders: UploadFile = File(...),
-                   settings: str = Form("{}")):
+    async def plan(orders: UploadFile = File(...), tours: UploadFile | None = File(None),
+                   settings: str = Form("{}"), template: str = Form("")):
+        """With tours: insert the orders. Without: plan tours from scratch.
+        With a template the orders file may have any layout (Excel)."""
         try:
             s = settings_from_json(json.loads(settings))
+            spec = Template.from_json(json.loads(template)) if template.strip() else None
         except json.JSONDecodeError as error:
-            raise InputError(f"bad settings: {error}") from error
+            raise InputError(f"bad settings or template: {error}") from error
+        except ValueError as error:
+            raise InputError(f"bad template: {error}") from error
+        name = orders.filename or "orders"
+        if spec is not None:
+            try:
+                rows, no_address = import_rows(await read_bytes(orders), name, spec)
+            except ValueError as error:
+                raise InputError(str(error)) from error
+        else:
+            if name.lower().endswith((".xlsx", ".xlsm", ".xls")):
+                raise InputError(f"{name}: for an Excel file, set up the columns first")
+            rows, no_address = read_rows_text(await read_upload(orders), name), []
+        if tours is None or not tours.filename:
+            return result_json(plan_new(rows, s, get_geocoder(s), no_address), s, "new")
         tour_rows = read_rows_text(await read_upload(tours), tours.filename or "tours")
-        order_rows = read_rows_text(await read_upload(orders), orders.filename or "orders")
-        result = run(tour_rows, order_rows, s, get_geocoder(s))
+        result = run(tour_rows, rows, s, get_geocoder(s))
+        result.unplaced = [unplaced_from_row(r, "order_id", REASON_NO_ADDRESS, s.service_min)
+                           for r in no_address] + result.unplaced
         return result_json(result, s)
 
     @app.post("/api/schedule")

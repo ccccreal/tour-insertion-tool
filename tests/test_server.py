@@ -189,3 +189,49 @@ def test_vehicles_capacity_and_kind(client):
 def test_page_files_are_revalidated(client):
     r = client.get("/app.js")
     assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"
+
+
+@pytest.fixture
+def zurich_client():
+    from test_import import FakeGeocoder
+    return TestClient(create_app(lambda settings: FakeGeocoder()))
+
+
+def test_inspect_and_plan_examples(zurich_client):
+    examples = zurich_client.get("/api/plan-examples").json()
+    assert {e["name"] for e in examples} == {"praxen", "standorte"}
+    data = zurich_client.get("/api/plan-examples/standorte/stops").content
+    r = zurich_client.post("/api/inspect", files={"file": ("standorte.xlsx", data)})
+    assert r.status_code == 200
+    sheet = r.json()["sheets"][0]
+    assert sheet["headers"][:2] == ["Standort", "Adresse"] and sheet["rows"] == 21
+    bad = zurich_client.post("/api/inspect", files={"file": ("x.xlsx", b"not excel")})
+    assert bad.status_code == 400
+
+
+def test_plan_from_scratch_with_template(zurich_client):
+    data = zurich_client.get("/api/plan-examples/standorte/stops").content
+    template = zurich_client.get("/api/plan-examples/standorte/template").json()
+    settings = {"depot": "47.3779, 8.5403", "day_start": 480, "day_end": 660,
+                "vehicles": {"Lastenvelo": {"capacity": 10, "speed_kmh": 15, "count": 2},
+                             "Auto": {"capacity": 40, "speed_kmh": 20, "count": 1}}}
+    r = zurich_client.post("/api/plan", files={"orders": ("standorte.xlsx", data)},
+                           data={"settings": json.dumps(settings), "template": json.dumps(template)})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["mode"] == "new"
+    placed = sum(len(t["stops"]) - 2 for t in body["tours"])
+    assert placed + len(body["unplaced"]) == 20
+    tour = body["tours"][0]
+    assert set(tour["quantities"]) == {"Box 50er", "Box 25er"}
+    stop = tour["stops"][1]
+    assert stop["name"] and set(stop["quantities"]) == {"Box 50er", "Box 25er"}
+    assert "Box 50er" in body["csv"]["tours"].splitlines()[0]
+    # a manual move keeps names and quantities
+    r = zurich_client.post("/api/schedule", json={"settings": body["settings"],
+                                                  "tours": body["tours"]})
+    assert r.json()["tours"][0]["stops"][1]["quantities"] == stop["quantities"]
+    # Excel without template -> clear message
+    r = zurich_client.post("/api/plan", files={"orders": ("standorte.xlsx", data)},
+                           data={"settings": json.dumps(settings)})
+    assert r.status_code == 400 and "columns" in r.json()["detail"]

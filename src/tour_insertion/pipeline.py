@@ -23,6 +23,8 @@ from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 
+import re
+
 from tour_insertion.csv_io import orders_from_rows, tours_from_rows, unplaced_from_row
 from tour_insertion.geocoding import (NOT_FOUND, FranceGeocoder,
                                       GeocodeResult, Geocoder, SwissGeocoder,
@@ -31,7 +33,7 @@ from tour_insertion.model import InsertionOption, Schedule, Stop, Tour
 from tour_insertion.optimize import improve_tour, moved_stops
 from tour_insertion.planner import Unplaced, insert_orders
 from tour_insertion.schedule import forward_pass
-from tour_insertion.traveltime import CrowFlyModel, TravelModel
+from tour_insertion.traveltime import CachedModel, CrowFlyModel, TravelModel
 
 
 class InputError(ValueError):
@@ -62,6 +64,13 @@ class Settings:
     # missing speed = speed_m_per_min. Tours without a vehicle: no limit.
     vehicles: Mapping[str, Mapping[str, float | int | None]] = field(
         default_factory=lambda: {k: dict(v) for k, v in DEFAULT_VEHICLES.items()})
+    # Planning from scratch (no tours given, see plan_new): where the tours
+    # start and end ("address" or "lat, lon"), when they start and by when
+    # they must be back (minutes since midnight, None = no limit). How many
+    # vehicles of each type: "count" in `vehicles`.
+    depot: str = ""
+    day_start: int = 480
+    day_end: int | None = None
 
 
 def apply_vehicles(tours: Mapping[str, Tour], settings: Settings
@@ -249,3 +258,90 @@ def run(tour_rows: list[dict], order_rows: list[dict], settings: Settings,
     return RunResult(tours, orders, result.inserted,
                      geo_unplaced + result.unplaced, schedules, geo_results,
                      skipped, changes)
+
+
+# --------------------------------------------------------------------------
+# Planning from scratch: only a list of stops, no tours yet
+# --------------------------------------------------------------------------
+
+def locate_depot(settings: Settings, geocoder: Geocoder) -> tuple[Stop, GeocodeResult | None]:
+    """The depot from settings.depot: "47.3779, 8.5403" or an address."""
+    text = settings.depot.strip()
+    if not text:
+        raise InputError("planning without tours needs a depot (address or lat, lon)")
+    m = re.fullmatch(r"(-?\d+(?:\.\d+)?)\s*[,; ]\s*(-?\d+(?:\.\d+)?)", text)
+    if m:
+        return Stop("depot", float(m.group(1)), float(m.group(2)), address=text), None
+    try:
+        result = geocoder.geocode(text)
+    except OSError as error:
+        raise InputError(f"geocoding service not reachable: {error}") from error
+    except ValueError as error:
+        raise InputError(f"depot: {error}") from error
+    finally:
+        geocoder.save()
+    if result.status != "ok" or result.lat is None:
+        found = f" (found: {result.label})" if result.label else ""
+        raise InputError(f"the depot address could not be found reliably: {text}{found}. "
+                         "Check it or give lat, lon.")
+    return Stop("depot", result.lat, result.lon, address=result.label or text,
+                country=result.country), result
+
+
+def empty_tours(depot: Stop, settings: Settings) -> dict[str, Tour]:
+    """One tour depot -> depot per vehicle ("Lastenvelo 1", "Lastenvelo 2", ...)."""
+    tours = {}
+    for name, spec in settings.vehicles.items():
+        try:
+            count = int((spec or {}).get("count") or 0)
+        except (TypeError, ValueError) as error:
+            raise InputError(f"vehicle {name!r}: count must be a whole number") from error
+        for i in range(1, count + 1):
+            tour_id = f"{name} {i}"
+            start = replace(depot, stop_id=f"{tour_id} start", tw_start=settings.day_start)
+            end = replace(depot, stop_id=f"{tour_id} end", tw_end=settings.day_end)
+            tours[tour_id] = Tour(tour_id, (start, end), vehicle=name)
+    if not tours:
+        raise InputError("planning without tours needs at least one vehicle "
+                         "(set how many of each type are available)")
+    return tours
+
+
+def plan_new(order_rows: list[dict], settings: Settings, geocoder: Geocoder | None = None,
+             no_address: list[dict] = ()) -> RunResult:
+    """Plan tours from scratch: every vehicle starts with an empty tour
+    (depot -> depot), all stops are inserted with the same cheapest
+    insertion as for overnight orders, then every tour is improved.
+
+    Tours are filled as long as time (day_end) and capacity allow; vehicles
+    that get no stop are left out. This is a simple heuristic, not an
+    optimal plan (see README).
+    """
+    geocoder = geocoder or make_geocoder(settings)
+    depot, depot_result = locate_depot(settings, geocoder)
+    try:
+        geo_results, geo_unplaced, _ = geocode_rows([], order_rows, geocoder,
+                                                    settings.service_min)
+        orders = orders_from_rows([r for r in order_rows if not needs_geocoding(r)],
+                                  settings.service_min)
+    except OSError as error:
+        raise InputError(f"geocoding service not reachable: {error}") from error
+    except (KeyError, ValueError) as error:
+        raise InputError(str(error)) from error
+    missing = [unplaced_from_row(r, "order_id", "address_missing", settings.service_min)
+               for r in no_address]
+
+    tours, model, models = apply_vehicles(empty_tours(depot, settings), settings)
+    model = CachedModel(model)
+    models = {t: CachedModel(m) for t, m in models.items()}
+    options = dict(fixed_first=True, fixed_last=True, tolerance_min=settings.tolerance_min)
+    try:
+        result = insert_orders(tours, orders, model, models=models, **options)
+    except ValueError as error:
+        raise InputError(str(error)) from error
+    final = {t: improve_tour(tour, models.get(t, model), **options)
+             for t, tour in result.tours.items() if len(tour) > 2}
+    schedules = [forward_pass(final[t], models.get(t, model)) for t in final]
+    return RunResult(final, orders, result.inserted,
+                     missing + geo_unplaced + result.unplaced, schedules,
+                     ([depot_result] if depot_result else []) + geo_results)

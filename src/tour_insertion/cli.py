@@ -1,4 +1,9 @@
-"""Command line: tour-insert tours.csv orders.csv -o out/ [--map]"""
+"""Command line.
+
+    tour-insert tours.csv orders.csv -o out/ [--map]          insert orders
+    tour-insert --stops stops.xlsx --template t.json \
+                --depot "address" --fleet Lastenvelo=4 Auto=1   plan from scratch
+"""
 
 from __future__ import annotations
 
@@ -7,22 +12,34 @@ import json
 import sys
 from pathlib import Path
 
-from tour_insertion.csv_io import (format_time, read_rows, write_geocoding,
+from tour_insertion.csv_io import (format_time, parse_time, read_rows, write_geocoding,
                                    write_schedules, write_skipped,
                                    write_unplaced)
 from tour_insertion.geocoding import Geocoder
 from tour_insertion.load import max_load, over_capacity
-from tour_insertion.pipeline import InputError, Settings, make_geocoder, run
+from tour_insertion.pipeline import InputError, Settings, make_geocoder, plan_new, run
+from tour_insertion.stop_import import Template, order_rows
 
 
 def build_parser() -> argparse.ArgumentParser:
     d = Settings()
     p = argparse.ArgumentParser(
         prog="tour-insert",
-        description="Insert new stops into pre-planned tours "
-                    "(cheapest feasible insertion).")
-    p.add_argument("tours", type=Path, help="CSV with the planned tours")
-    p.add_argument("orders", type=Path, help="CSV with the new orders")
+        description="Insert new stops into pre-planned tours (cheapest feasible "
+                    "insertion), or plan tours from a list of stops (--stops).")
+    p.add_argument("tours", type=Path, nargs="?", help="CSV with the planned tours")
+    p.add_argument("orders", type=Path, nargs="?",
+                   help="new orders: CSV, or Excel/CSV with --template")
+    p.add_argument("--stops", type=Path,
+                   help="plan from scratch: list of stops (Excel or CSV), no tours")
+    p.add_argument("--template", type=Path,
+                   help="JSON column mapping for the stops/orders file (see stop_import.py)")
+    p.add_argument("--depot", default="",
+                   help='with --stops: depot address or "lat, lon"')
+    p.add_argument("--fleet", nargs="+", default=[], metavar="TYPE=N",
+                   help="with --stops: number of vehicles per type, e.g. Lastenvelo=4 Auto=1")
+    p.add_argument("--start", default="08:00", help="with --stops: tour start (default 08:00)")
+    p.add_argument("--end", default="", help="with --stops: latest return, e.g. 12:00")
     p.add_argument("-o", "--out", type=Path, default=Path("out"),
                    help="output folder (default: out)")
     p.add_argument("--map", action="store_true",
@@ -53,6 +70,19 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def load_orders(path: Path, template: Path | None) -> tuple[list[dict], list[dict]]:
+    """Rows of an orders/stops file; with a template any layout (Excel)."""
+    if template is None:
+        if path.suffix.lower() in (".xlsx", ".xlsm"):
+            raise SystemExit(f"{path}: an Excel file needs --template")
+        return read_rows(path), []
+    try:
+        spec = Template.from_json(json.loads(template.read_text(encoding="utf-8")))
+        return order_rows(path.read_bytes(), path.name, spec)
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"{path}: {error}") from error
+
+
 def main(argv: list[str] | None = None, geocoder: Geocoder | None = None) -> int:
     args = build_parser().parse_args(argv)
     vehicles = Settings().vehicles
@@ -61,12 +91,35 @@ def main(argv: list[str] | None = None, geocoder: Geocoder | None = None) -> int
             vehicles = json.loads(args.vehicles.read_text(encoding="utf-8"))
         except (OSError, ValueError) as error:
             raise SystemExit(f"cannot read {args.vehicles}: {error}") from error
-    settings = Settings(args.detour_factor, args.speed, args.service_min,
-                        args.tolerance_min, args.open_start, args.open_end,
-                        args.min_score, args.optimize, vehicles)
+    vehicles = {k: dict(v) for k, v in vehicles.items()}
+    for item in args.fleet:
+        name, _, count = item.partition("=")
+        if name not in vehicles or not count.isdigit():
+            raise SystemExit(f"--fleet {item}: use TYPE=N with a known type "
+                             f"({', '.join(vehicles)})")
+        vehicles[name]["count"] = int(count)
     try:
-        result = run(read_rows(args.tours), read_rows(args.orders), settings,
-                     geocoder or make_geocoder(settings, args.geocode_cache))
+        settings = Settings(args.detour_factor, args.speed, args.service_min,
+                            args.tolerance_min, args.open_start, args.open_end,
+                            args.min_score, args.optimize, vehicles, args.depot,
+                            parse_time(args.start), parse_time(args.end))
+    except ValueError as error:
+        raise SystemExit(f"bad time: {error}") from error
+    geocoder = geocoder or make_geocoder(settings, args.geocode_cache)
+    try:
+        if args.stops:
+            if args.tours or args.orders:
+                raise SystemExit("use either tours + orders or --stops, not both")
+            rows, no_address = load_orders(args.stops, args.template)
+            result = plan_new(rows, settings, geocoder, no_address)
+        else:
+            if not (args.tours and args.orders):
+                raise SystemExit("give tours.csv and orders.csv, or --stops")
+            rows, no_address = load_orders(args.orders, args.template)
+            if no_address:
+                raise SystemExit(f"{len(no_address)} order(s) without address, "
+                                 f"e.g. {no_address[0]['_where']}")
+            result = run(read_rows(args.tours), rows, settings, geocoder)
     except InputError as error:
         raise SystemExit(str(error)) from error
 

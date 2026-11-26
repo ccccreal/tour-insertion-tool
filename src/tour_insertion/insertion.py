@@ -81,7 +81,15 @@ def best_insertion(tour: Tour, stop: Stop, model: TravelModel, *,
     exempt = late_stops(forward_pass(tour, model, start_time), tolerance_min)
     best: InsertionOption | None = None
     best_key: tuple | None = None
-    for pos in allowed_positions(len(tour), fixed_first, fixed_last):
+    # Check positions from the cheapest delta upwards: the expensive part is
+    # the schedule check, and once a position fits, only positions with the
+    # SAME delta can still win (tie-break on reserve). Same result as
+    # checking every position, much faster for long tours.
+    candidates = sorted((insertion_cost(tour, stop, pos, model), pos)
+                        for pos in allowed_positions(len(tour), fixed_first, fixed_last))
+    for delta, pos in candidates:
+        if best_key is not None and delta > best_key[0]:
+            break
         new_tour = tour.with_inserted(stop, pos)
         if (check_capacity and tour.capacity is not None
                 and max_load(new_tour.stops) > tour.capacity):
@@ -90,7 +98,6 @@ def best_insertion(tour: Tour, stop: Stop, model: TravelModel, *,
                         tolerance_min, exempt)
         if not verdict.feasible:
             continue
-        delta = insertion_cost(tour, stop, pos, model)
         key = (delta, -_reserve(verdict.min_slack), pos)
         if best_key is None or key < best_key:
             best_key = key

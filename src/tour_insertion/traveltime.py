@@ -82,3 +82,31 @@ class CrowFlyModel:
         an extra minute; real values like 18.01 still round up to 19.
         """
         return math.ceil(self.travel_exact(a, b) - 1e-9)
+
+
+class CachedModel:
+    """Remembers every travel time asked for once. Planning many stops asks
+    for the same pairs over and over (every insertion position, every
+    forward pass); with ~150 stops this makes it several times faster."""
+
+    def __init__(self, model: TravelModel):
+        self.model = model
+        self._exact: dict[tuple[Point, Point], float] = {}
+        self._min: dict[tuple[Point, Point], int] = {}
+
+    def travel_exact(self, a: Point, b: Point) -> float:
+        key = (a, b)
+        value = self._exact.get(key)
+        if value is None:
+            value = self._exact[key] = self.model.travel_exact(a, b)
+        return value
+
+    def travel_min(self, a: Point, b: Point) -> int:
+        key = (a, b)
+        value = self._min.get(key)
+        if value is None:
+            value = self._min[key] = self.model.travel_min(a, b)
+        return value
+
+    def distance_m(self, a: Point, b: Point) -> float:
+        return self.model.distance_m(a, b)

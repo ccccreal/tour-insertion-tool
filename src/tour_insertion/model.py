@@ -30,6 +30,11 @@ class Stop:
                (counts as 0 for the capacity check, see load.py)
     kind       "drop" (items are delivered here, the default) or "pickup"
                (items are collected here and carried to the end of the tour)
+    name       short label for people (e.g. location or practice name)
+    quantities items per product, e.g. (("Box 50er", 2), ("Box 25er", 1));
+               their sum is `items`. Only for the summary and the export.
+    info       other columns of the input (contact, opening hours, ...),
+               not used for planning, passed on to the export
     """
 
     stop_id: str
@@ -43,6 +48,9 @@ class Stop:
     is_new: bool = False
     items: int | None = None
     kind: str = "drop"
+    name: str = ""
+    quantities: tuple[tuple[str, int], ...] = ()
+    info: tuple[tuple[str, str], ...] = ()
 
     @property
     def point(self) -> Point:

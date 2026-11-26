@@ -1,0 +1,10 @@
+{
+  "title": "Standorte (Adresse in einer Spalte, zwei Produkte)",
+  "address": ["Adresse"],
+  "id": "Standort",
+  "name_columns": ["Standort"],
+  "quantities": ["Box 50er", "Box 25er"],
+  "info": [],
+  "country": "CH",
+  "kind": "drop"
+}

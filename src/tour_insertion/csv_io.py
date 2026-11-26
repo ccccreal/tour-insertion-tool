@@ -70,7 +70,18 @@ def _stop_from_row(row: dict[str, str], id_column: str, default_service: int,
         is_new=is_new,
         items=items,
         kind=kind,
+        **extras_from_row(row),
     )
+
+
+def extras_from_row(row: dict) -> dict:
+    """name, quantities and info of a row (filled by stop_import.py for
+    Excel files; a plain CSV may have a 'name' column)."""
+    return {
+        "name": str(row.get("_name") or row.get("name") or "").strip(),
+        "quantities": tuple((row.get("_quantities") or {}).items()),
+        "info": tuple((row.get("_info") or {}).items()),
+    }
 
 
 def parse_kind(text: str | None) -> str:
@@ -107,11 +118,13 @@ def unplaced_from_row(row: dict[str, str], id_column: str, reason: str,
         kind = parse_kind(row.get("type"))
     except ValueError:
         kind = DROP
+    extras = extras_from_row(row)
     return Unplaced((row.get(id_column) or "").strip(),
                     (row.get("address") or "").strip(), reason, None,
                     parse_time(row.get("tw_start")), parse_time(row.get("tw_end")),
                     tour_id, service_min, items,
-                    (row.get("country") or "").strip().upper(), kind)
+                    (row.get("country") or "").strip().upper(), kind,
+                    extras["name"], extras["quantities"], extras["info"])
 
 
 def read_rows(source: str | Path | IO[str], name: str | None = None
@@ -185,22 +198,50 @@ def read_orders(path: str | Path, default_service: int = 3) -> list[Stop]:
     return orders_from_rows(read_rows(path), default_service)
 
 
-TOUR_COLUMNS = ["tour_id", "vehicle", "seq", "stop_id", "is_new", "moved",
+TOUR_COLUMNS = ["tour_id", "vehicle", "seq", "stop_id", "name", "is_new", "moved",
                 "type", "address", "country", "lat", "lon", "items", "load",
                 "arrival", "departure", "tw_start", "tw_end", "slack_min"]
 
 
+def extra_columns(stops) -> tuple[list[str], list[str]]:
+    """Product and info column names, in order of first appearance.
+    A name that clashes with a standard column gets a prefix."""
+    products, info = [], []
+    for s in stops:
+        for name, _ in s.quantities:
+            if name not in products:
+                products.append(name)
+        for name, _ in s.info:
+            if name not in info:
+                info.append(name)
+    return products, info
+
+
+def _column(name: str, prefix: str, taken: set[str]) -> str:
+    return f"{prefix}{name}" if name in taken else name
+
+
 def schedules_to_csv(schedules: list[Schedule],
                      moved: frozenset[str] = frozenset()) -> str:
-    """moved: stop_ids whose order was changed by optimizing (column 'moved')."""
+    """moved: stop_ids whose order was changed by optimizing (column 'moved').
+    Quantities per product and info columns of the input come after the
+    standard columns."""
+    products, info = extra_columns(t.stop for s in schedules for t in s.times)
+    taken = set(TOUR_COLUMNS)
+    product_cols = [_column(p, "qty_", taken) for p in products]
+    info_cols = [_column(i, "info_", taken | set(product_cols)) for i in info]
     out = io.StringIO()
-    writer = csv.DictWriter(out, fieldnames=TOUR_COLUMNS, lineterminator="\n")
+    writer = csv.DictWriter(out, fieldnames=TOUR_COLUMNS + product_cols + info_cols,
+                            lineterminator="\n")
     writer.writeheader()
     for schedule in schedules:
         loads = load_after([t.stop for t in schedule.times])
         for seq, (t, load) in enumerate(zip(schedule.times, loads), start=1):
             s = t.stop
-            writer.writerow({
+            q, i = dict(s.quantities), dict(s.info)
+            extra = {c: q.get(p, "") for c, p in zip(product_cols, products)}
+            extra.update({c: i.get(n, "") for c, n in zip(info_cols, info)})
+            writer.writerow({**extra, "name": s.name,
                 "tour_id": schedule.tour.tour_id, "vehicle": schedule.tour.vehicle,
                 "seq": seq, "stop_id": s.stop_id, "is_new": int(s.is_new),
                 "moved": int(s.stop_id in moved), "type": s.kind,
@@ -219,10 +260,15 @@ def schedules_to_csv(schedules: list[Schedule],
 def unplaced_to_csv(unplaced: list[Unplaced]) -> str:
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\n")
-    writer.writerow(["order_id", "type", "address", "items", "tw_start", "tw_end", "reason"])
+    products, info = extra_columns(unplaced)
+    writer.writerow(["order_id", "name", "type", "address", "items", "tw_start", "tw_end",
+                     "reason", *products, *info])
     for u in unplaced:
-        writer.writerow([u.order_id, u.kind, u.address, "" if u.items is None else u.items,
-                         format_time(u.tw_start), format_time(u.tw_end), u.reason])
+        q, i = dict(u.quantities), dict(u.info)
+        writer.writerow([u.order_id, u.name, u.kind, u.address,
+                         "" if u.items is None else u.items,
+                         format_time(u.tw_start), format_time(u.tw_end), u.reason,
+                         *(q.get(p, "") for p in products), *(i.get(n, "") for n in info)])
     return out.getvalue()
 
 
