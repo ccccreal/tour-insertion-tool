@@ -95,12 +95,6 @@ The same image runs on any server. Put it behind HTTPS (e.g. Caddy or the
 provider's proxy) and set `TOOL_PASSWORD` before it is reachable from the
 internet.
 
-### Streamlit demo (older)
-
-The first web version (Streamlit, no drag & drop, old file format with the
-depot in the tours file) lives frozen on the branch `streamlit-demo`, which
-Streamlit Community Cloud deploys. It is no longer developed.
-
 ## Input
 
 `tours.csv`: the customer stops of each tour, in driving order. No depot
@@ -267,7 +261,7 @@ Detour factor and speed are assumptions, not measured for any city.
 1. ~~Core: insertion, schedule, feasibility, CLI~~
 2. ~~Geocoding: France (IGN Géoplateforme, BAN), Switzerland (swisstopo)~~
 3. ~~Map of the new tours~~
-4. ~~Web app (Streamlit demo, then API + JavaScript page with drag & drop)~~
+4. ~~Web app (API + JavaScript page with drag & drop)~~
 5. ~~Optional reordering within each tour~~
 6. ~~End at a connection point; vehicles with capacity; pickups and drops~~
 7. Optional: street-network travel times (OSRM)
