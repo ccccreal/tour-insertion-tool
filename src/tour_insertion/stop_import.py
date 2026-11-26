@@ -15,6 +15,8 @@ means what:
                 items. Empty list: every stop has `default_items`.
     info        columns passed on unchanged to the export (contact, opening
                 hours, ...), not used for planning
+    labels      readable names for info columns in the export, e.g.
+                {"Praxis_Klinik": "Praxis"} (optional)
     country     "CH", "FR" or "" (guess from the postal code)
     kind        "drop" or "pickup" for all stops of the file
 
@@ -49,6 +51,7 @@ class Template:
     name_columns: list[str] = field(default_factory=list)
     quantities: list[str] = field(default_factory=list)
     info: list[str] = field(default_factory=list)
+    labels: dict[str, str] = field(default_factory=dict)
     country: str = ""
     kind: str = DROP
     default_items: int = 1
@@ -303,7 +306,7 @@ def order_rows(data: bytes, filename: str, template: Template
             "items": str(items), "type": template.kind, "_where": where,
             "_name": name,
             "_quantities": {c: v for c, v in quantities.items()},
-            "_info": {c: row[c] for c in template.info if row[c]},
+            "_info": {template.labels.get(c) or c: row[c] for c in template.info if row[c]},
         }
         if floors:                       # kept for the driver, not geocoded
             result["_info"]["floor"] = ", ".join(floors)

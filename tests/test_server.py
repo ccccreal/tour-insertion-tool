@@ -235,3 +235,31 @@ def test_plan_from_scratch_with_template(zurich_client):
     r = zurich_client.post("/api/plan", files={"orders": ("standorte.xlsx", data)},
                            data={"settings": json.dumps(settings)})
     assert r.status_code == 400 and "columns" in r.json()["detail"]
+
+
+def test_exports(zurich_client):
+    data = zurich_client.get("/api/plan-examples/standorte/stops").content
+    template = zurich_client.get("/api/plan-examples/standorte/template").json()
+    settings = {"depot": "47.3779, 8.5403", "day_end": 600,
+                "vehicles": {"Lastenvelo": {"capacity": 10, "speed_kmh": 15, "count": 3}}}
+    body = zurich_client.post("/api/plan", files={"orders": ("s.xlsx", data)},
+                              data={"settings": json.dumps(settings),
+                                    "template": json.dumps(template)}).json()
+    payload = {"settings": body["settings"], "tours": body["tours"],
+               "unplaced": body["unplaced"], "lang": "fr"}
+    r = zurich_client.post("/api/export/xlsx", json=payload)
+    assert r.status_code == 200 and r.content[:2] == b"PK"
+    import io
+
+    import openpyxl
+    wb = openpyxl.load_workbook(io.BytesIO(r.content))
+    names = [t["tour_id"] for t in body["tours"]]
+    assert wb.sheetnames[:len(names)] == names
+    if body["unplaced"]:
+        assert wb.sheetnames[-1] == "Non planifiés"
+    values = [c for row in wb.worksheets[0].iter_rows(values_only=True) for c in row if c]
+    assert "Box 50er" in values and "Fait" in values
+    r = zurich_client.post("/api/export/pdf", json={**payload, "tour_id": names[0]})
+    assert r.status_code == 200 and r.content.startswith(b"%PDF")
+    assert f'tour_{names[0].replace(" ", "_")}.pdf' in r.headers["content-disposition"]
+    assert zurich_client.post("/api/export/doc", json=payload).status_code == 404

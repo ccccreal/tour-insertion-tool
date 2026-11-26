@@ -193,3 +193,6 @@ aside input[type=time] { width: 100%; padding: 10px 12px; font: inherit; color: 
 .sample { padding: 8px 12px; border-radius: 6px; background: var(--panel); }
 .sample.bad { color: var(--bad); }
 tr.total td { font-weight: 700; border-top: 2px solid var(--line); }
+
+.button-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+button.primary-light { border-color: var(--accent); font-weight: 700; }

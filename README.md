@@ -37,6 +37,12 @@ Output folder:
   and departure, and slack to the time window
 - `unplaced.csv`: orders that fit into no tour or could not be geocoded, with
   the reason
+- `tours.xlsx`: one sheet per tour (order, times, name, address, quantity
+  per product, load, time window, info columns, a "done" column), plus a
+  sheet with what could not be planned
+- `tours.pdf`: one driver sheet per tour (no map): vehicle, start, return,
+  items per product, then every stop with arrival, name, address, floor,
+  items, time window and notes (e.g. opening hours), and a tick box
 - `geocoding.csv`: every looked-up address with what was found (only when
   something was geocoded); check it by eye
 - `map.html` (with `--map`): open in a browser. Tours as coloured lines,

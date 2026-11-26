@@ -200,7 +200,7 @@ function applyTemplate(tpl) {
   set(tpl.info, "info");
   state.roles = roles;
   state.mapOptions = { kind: tpl.kind || "drop", country: tpl.country || "",
-                       default_items: tpl.default_items ?? 1 };
+                       default_items: tpl.default_items ?? 1, labels: tpl.labels || {} };
   const wanted = [tpl.address, tpl.postcode, tpl.city, tpl.id, tpl.name_columns, tpl.quantities, tpl.info]
     .flat().filter(Boolean);
   state.mappingMissing = wanted.filter(c => !headers.includes(c));
@@ -1090,11 +1090,15 @@ function tourPanel(tr, ti) {
   });
   const csvButton = h("button", { type: "button", class: "small-button" }, `⬇ ${tr.tour_id}.csv`);
   csvButton.addEventListener("click", () => download(`tour_${tr.tour_id}.csv`, tourCsv(tr.tour_id)));
+  const pdfButton = h("button", { type: "button", class: "small-button" }, `⬇ ${t("dl_pdf_one")}`);
+  pdfButton.addEventListener("click", () => exportFile("pdf", tr.tour_id));
+  const xlsxButton = h("button", { type: "button", class: "small-button" }, `⬇ Excel`);
+  xlsxButton.addEventListener("click", () => exportFile("xlsx", tr.tour_id));
   return h("div", { class: "panel" },
     h("div", { class: "cards" }, cards),
     table(["#", t("col_stop"), t("col_type"), t("col_items"), t("on_board"), t("col_arrival"),
            t("col_departure"), t("col_window"), t("col_slack"), ""], rows),
-    csvButton);
+    h("div", { class: "button-row" }, pdfButton, xlsxButton, csvButton));
 }
 
 function loadBar(load, capacity) {
@@ -1128,11 +1132,36 @@ function renderDownloads() {
   const files = [["tours_new.csv", state.csv.tours], ["unplaced.csv", state.csv.unplaced]];
   if (state.skipped.length) files.push(["skipped_stops.csv", state.csv.skipped]);
   if (state.geocoding.length) files.push(["geocoding.csv", state.csv.geocoding]);
-  $("downloads").replaceChildren(...files.map(([name, text]) => {
+  const xlsx = h("button", { type: "button", class: "primary-light" }, "⬇ " + t("dl_xlsx"));
+  xlsx.addEventListener("click", () => exportFile("xlsx"));
+  const pdf = h("button", { type: "button", class: "primary-light" }, "⬇ " + t("dl_pdf"));
+  pdf.addEventListener("click", () => exportFile("pdf"));
+  $("downloads").replaceChildren(xlsx, pdf, ...files.map(([name, text]) => {
     const b = h("button", { type: "button" }, "⬇ " + name);
     b.addEventListener("click", () => download(name, text || ""));
     return b;
   }));
+}
+
+// Excel (one sheet per tour) and PDF (driver sheets) are made by the server
+// from the current plan, including manual moves.
+async function exportFile(fmt, tourId) {
+  try {
+    const response = await fetch(`api/export/${fmt}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ settings: state.settings, tours: state.tours, unplaced: state.unplaced,
+                             lang: LANG, tour_id: tourId || null })
+    });
+    if (!response.ok) throw new Error((await response.json().catch(() => ({}))).detail || response.status);
+    const blob = await response.blob();
+    const match = /filename="([^"]+)"/.exec(response.headers.get("content-disposition") || "");
+    const url = URL.createObjectURL(blob);
+    const a = h("a", { href: url, download: match ? match[1] : `tours.${fmt}` });
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (e) {
+    showError(t("error") + "\n" + e);
+  }
 }
 
 init();

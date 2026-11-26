@@ -5,7 +5,7 @@ description = "Insert overnight orders into pre-planned delivery tours (cheapest
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
-dependencies = ["folium>=0.17", "openpyxl>=3.1"]
+dependencies = ["folium>=0.17", "openpyxl>=3.1", "reportlab>=4"]
 
 [project.optional-dependencies]
 app = ["streamlit>=1.45"]

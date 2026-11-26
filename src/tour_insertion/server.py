@@ -16,6 +16,9 @@ Endpoints (all JSON unless noted):
                                     Without tours: plan from scratch.
   POST /api/inspect                 form: file -> sheets, columns, preview
                                     and a guessed template (Excel import)
+  POST /api/export/{fmt}            {settings, tours, unplaced, lang, tour_id?}
+                                    -> tours.xlsx (one sheet per tour) or
+                                    tours.pdf (driver sheets)
   GET  /api/plan-examples           stop lists for planning from scratch
   GET  /api/plan-examples/{name}/{part}  part = stops (file) | template
   POST /api/schedule                {settings, tours, unplaced} -> times,
@@ -35,6 +38,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import re
 import secrets
 from collections.abc import Callable
 from dataclasses import asdict, fields
@@ -48,6 +52,7 @@ from tour_insertion.csv_io import (format_time, geocoding_to_csv, parse_kind, re
                                    unplaced_from_row,
                                    schedules_to_csv, skipped_to_csv,
                                    unplaced_to_csv)
+from tour_insertion.export import tours_pdf, tours_xlsx
 from tour_insertion.feasibility import late_stops
 from tour_insertion.load import load_after, max_load, over_capacity
 from tour_insertion.geocoding import Geocoder
@@ -438,6 +443,29 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
                     "unplaced": unplaced_to_csv(unplaced),
                     "skipped": skipped_to_csv(skipped)},
         }
+
+    @app.post("/api/export/{fmt}")
+    def export(fmt: str, body: dict):
+        if fmt not in ("xlsx", "pdf"):
+            raise HTTPException(404)
+        s = settings_from_json(body.get("settings"))
+        tours, _, model, models = tours_from_json(body.get("tours"), s)
+        only = body.get("tour_id")
+        if only:
+            tours = {only: tours[only]} if only in tours else {}
+        schedules = [forward_pass(t, models.get(i, model)) for i, t in tours.items()]
+        lang = str(body.get("lang") or "de")
+        name = f"tour_{only}" if only else "tours"
+        name = re.sub(r"[^A-Za-z0-9_.-]+", "_", name)
+        if fmt == "xlsx":
+            unplaced = [] if only else [unplaced_from_json(d) for d in body.get("unplaced") or []]
+            data = tours_xlsx(schedules, unplaced, lang)
+            media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        else:
+            data = tours_pdf(schedules, lang)
+            media = "application/pdf"
+        return Response(data, media_type=media,
+                        headers={"Content-Disposition": f'attachment; filename="{name}.{fmt}"'})
 
     if WEB.exists():
         app.mount("/", StaticFiles(directory=WEB, html=True), name="web")

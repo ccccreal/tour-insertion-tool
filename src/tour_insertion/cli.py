@@ -44,6 +44,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="output folder (default: out)")
     p.add_argument("--map", action="store_true",
                    help="also write out/map.html")
+    p.add_argument("--lang", choices=["de", "fr", "en"], default="de",
+                   help="language of tours.xlsx and tours.pdf (default de)")
     p.add_argument("--detour-factor", type=float, default=d.detour_factor,
                    help="street / crow-fly distance (assumption, default 1.35)")
     p.add_argument("--speed", type=float, default=d.speed_m_per_min,
@@ -127,6 +129,10 @@ def main(argv: list[str] | None = None, geocoder: Geocoder | None = None) -> int
     written = [args.out / "tours_new.csv", args.out / "unplaced.csv"]
     write_schedules(written[0], result.schedules, result.moved)
     write_unplaced(written[1], result.unplaced)
+    from tour_insertion.export import tours_pdf, tours_xlsx
+    written += [args.out / "tours.xlsx", args.out / "tours.pdf"]
+    written[-2].write_bytes(tours_xlsx(result.schedules, result.unplaced, args.lang))
+    written[-1].write_bytes(tours_pdf(result.schedules, args.lang))
     if result.skipped:
         written.append(args.out / "skipped_stops.csv")
         write_skipped(written[-1], result.skipped)
