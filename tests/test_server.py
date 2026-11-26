@@ -184,3 +184,8 @@ def test_vehicles_capacity_and_kind(client):
     # unknown vehicle -> 400
     r = plan(client, tours, orders, {"vehicles": {}})
     assert r.status_code == 400 and "Velo" in r.json()["detail"]
+
+
+def test_page_files_are_revalidated(client):
+    r = client.get("/app.js")
+    assert r.status_code == 200 and r.headers["cache-control"] == "no-cache"

@@ -223,6 +223,15 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
     password = os.environ.get("TOOL_PASSWORD")
     app = FastAPI(title="Tour insertion tool", docs_url="/api/docs", redoc_url=None)
 
+    @app.middleware("http")
+    async def always_revalidate(request: Request, call_next):
+        """The browser must ask every time whether the page files changed
+        (cheap: unchanged files come back as 304 without content). Without
+        this, after an update it may mix old and new files."""
+        response = await call_next(request)
+        response.headers.setdefault("Cache-Control", "no-cache")
+        return response
+
     if password:
         @app.middleware("http")
         async def require_password(request: Request, call_next):
