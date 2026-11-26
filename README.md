@@ -98,6 +98,14 @@ drop). It still runs the demo on Streamlit Community Cloud (main file path
 
 The first stop's `tw_start` is the start time of the tour.
 
+The last stop does not have to be the depot. A tour may end at a
+connection point (hand-over to another vehicle, a train, a second depot):
+give the last stop its own address and, if it must be reached in time, a
+`tw_end`. New stops are always inserted before it. On the map the depot of
+a round trip is marked **D**; a tour that ends elsewhere has **S** (start)
+and **E** (end), and E turns red when the tour arrives too late.
+Example: `examples/anschluss/`.
+
 ## Geocoding
 
 | country | service | quality check |
@@ -177,6 +185,8 @@ this repository.
 
 - `examples/winterthur/`: 2 tours, 5 orders, with approximate coordinates
   (runs offline). Order N5 cannot be reached in time on purpose.
+- `examples/anschluss/`: the same tours, but each ends at a railway station
+  (connection point). T2 must be there by 09:30, so N2 no longer fits.
 - `examples/lyon/`: 2 tours, 7 orders, addresses only (needs internet).
   Public places and squares; C6 has no country (guessed from the postal code),
   C7 is a made-up address that must end up in `unplaced.csv`.

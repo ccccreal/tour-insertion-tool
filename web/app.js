@@ -229,6 +229,14 @@ function popupHtml(tour, number, s) {
 // be seen and dragged. Depots are drawn once per location and not spread.
 const SAME_SPOT_DIGITS = 5;            // ~1 m: same rounded position = same spot
 
+const SAME_LOCATION_M = 50;           // as in traveltime.py: closer = same place
+
+function metres(a, b) {                // haversine distance between two stops
+  const r = Math.PI / 180, dlat = (b.lat - a.lat) * r, dlon = (b.lon - a.lon) * r;
+  const h = Math.sin(dlat / 2) ** 2 + Math.cos(a.lat * r) * Math.cos(b.lat * r) * Math.sin(dlon / 2) ** 2;
+  return 2 * 6371000 * Math.asin(Math.sqrt(h));
+}
+
 function spotKey(lat, lon) { return lat.toFixed(SAME_SPOT_DIGITS) + "," + lon.toFixed(SAME_SPOT_DIGITS); }
 
 // Radius of the circle in pixels. Zoomed out: just wide enough that the
@@ -273,13 +281,21 @@ function renderMap() {
     L.polyline(tour.stops.map(s => [s.lat, s.lon]), { color: fill, weight: 4, opacity: 0.8 })
       .bindTooltip(tour.tour_id).addTo(layer);
     let number = 0;
+    const last = tour.stops.length - 1;
+    const roundTrip = metres(tour.stops[0], tour.stops[last]) < SAME_LOCATION_M;
     tour.stops.forEach((s, k) => {
-      const depot = (k === 0 || k === tour.stops.length - 1) && !s.is_new;
+      const depot = (k === 0 || k === last) && !s.is_new;
       if (depot) {
+        const role = roundTrip ? "D" : (k === 0 ? "S" : "E");
         const key = spotKey(s.lat, s.lon);
-        if (!depots.has(key)) depots.set(key, { lat: s.lat, lon: s.lon, address: s.address, tours: [], fill });
+        if (!depots.has(key)) depots.set(key, { lat: s.lat, lon: s.lon, address: s.address,
+                                                roles: {}, fill });
         const d = depots.get(key);
-        if (!d.tours.includes(tour.tour_id)) d.tours.push(tour.tour_id);
+        (d.roles[role] = d.roles[role] || []).includes(tour.tour_id) || d.roles[role].push(tour.tour_id);
+        if (role === "E" && s.late) d.late = true;    // connection missed (e.g. after a manual move)
+        if (role === "E") (d.ends = d.ends || []).push(
+          `${esc(tour.tour_id)}: ${esc(t("col_arrival"))} <span class="${s.late ? "late" : ""}">${hhmm(s.arrival)}</span>` +
+          (s.tw_end !== null && s.tw_end !== undefined ? ` (${esc(t("until"))} ${hhmm(s.tw_end)})` : ""));
         return;
       }
       number += 1;
@@ -293,10 +309,18 @@ function renderMap() {
   spreadPositions(entries);
 
   for (const d of depots.values()) {
-    const fill = d.tours.length > 1 ? "#333333" : d.fill;
-    L.marker([d.lat, d.lon], { icon: stopIcon("D", fill, false, true, false), zIndexOffset: 2000,
-                               title: d.tours.join(", ") })
-      .bindPopup(`<b>${esc(t("depot"))}</b><br>${esc(d.address)}<br>${esc(t("col_tour"))}: ${esc(d.tours.join(", "))}`)
+    // D = depot (start and end), S = start, E = end at another place.
+    // A place that is start of one tour and end of another is shown as D.
+    const roles = Object.keys(d.roles);
+    const label = roles.length === 1 ? roles[0] : "D";
+    const tours = [...new Set(Object.values(d.roles).flat())];
+    const fill = tours.length > 1 ? "#333333" : d.fill;
+    const lines = ["D", "S", "E"].filter(r => d.roles[r])
+      .map(r => `${esc(t("role_" + r))}: ${esc(d.roles[r].join(", "))}`);
+    L.marker([d.lat, d.lon], { icon: stopIcon(label, fill, false, true, !!d.late), zIndexOffset: 2000,
+                               title: tours.join(", ") })
+      .bindPopup(`<b>${esc(t("role_" + label))}</b><br>${esc(d.address)}<br>${lines.join("<br>")}` +
+                 (d.ends ? "<br>" + d.ends.join("<br>") : ""))
       .addTo(layer);
   }
   for (const e of entries) {

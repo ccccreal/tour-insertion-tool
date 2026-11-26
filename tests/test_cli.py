@@ -135,3 +135,20 @@ def test_optimize_flag_writes_moved_column(tmp_path):
     for tour_id in ("T1", "T2"):            # depots still first and last
         ids = [r["stop_id"] for r in rows if r["tour_id"] == tour_id]
         assert ids[0].endswith("-00") and ids[-1].endswith("-99")
+
+
+def test_tours_ending_at_a_connection_point(tmp_path):
+    folder = EXAMPLES / "anschluss"
+    assert main([str(folder / "tours.csv"), str(folder / "orders.csv"),
+                 "-o", str(tmp_path), "--map"]) == 0
+    rows = read_csv(tmp_path / "tours_new.csv")
+    for tour_id, end in (("T1", "T1-99"), ("T2", "T2-99")):
+        ids = [r["stop_id"] for r in rows if r["tour_id"] == tour_id]
+        assert ids[0] == f"{tour_id}-00" and ids[-1] == end
+    # T2 must be at its connection point by 09:30: N2 (+21 min) does not fit
+    t2_end = [r for r in rows if r["stop_id"] == "T2-99"][0]
+    assert parse_time(t2_end["arrival"]) <= parse_time("09:30")
+    assert "N2" in {r["order_id"] for r in read_csv(tmp_path / "unplaced.csv")}
+    page = (tmp_path / "map.html").read_text(encoding="utf-8")
+    page = page.replace("\\u003e", ">").replace("\\u003c", "<")   # folium escapes < >
+    assert ">S</div>" in page and ">E</div>" in page and ">D</div>" not in page

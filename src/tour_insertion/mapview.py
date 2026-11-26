@@ -3,7 +3,8 @@
 - every tour: a coloured line in driving order, stops numbered 1, 2, 3 ...
   (the depot is not counted)
 - new stops: larger, with a black ring, so they stand out
-- first/last stop (depot): square marked D
+- first/last stop: square marked D (depot, start = end), or S and E when
+  the tour ends somewhere else (connection point)
 - orders that fit nowhere: red cross (if they have coordinates)
 - click a stop: address, planned arrival, time window, slack
 """
@@ -18,6 +19,7 @@ import folium
 from tour_insertion.csv_io import format_time
 from tour_insertion.model import Schedule
 from tour_insertion.planner import Unplaced
+from tour_insertion.traveltime import SAME_LOCATION_M, Point, haversine_m
 
 # 12 clearly different tour colours (no pure red: red means "not placed").
 # Neighbouring entries differ strongly in hue AND brightness, so tours that
@@ -54,6 +56,13 @@ def _popup(tour_id: str, seq: int, t, moved: bool = False) -> str:
             f"arrival {format_time(t.arrival)}{window}{slack}")
 
 
+def end_labels(first: Point, last: Point) -> tuple[str, str]:
+    """("D", "D") for a round trip, ("S", "E") if the tour ends elsewhere."""
+    if haversine_m(first, last) < SAME_LOCATION_M:
+        return "D", "D"
+    return "S", "E"
+
+
 def _icon(text: str, colour: str, is_new: bool, is_depot: bool) -> folium.DivIcon:
     size = 26 if is_new else 20
     radius = "3px" if is_depot else "50%"
@@ -84,14 +93,16 @@ def build_map(schedules: list[Schedule], unplaced: list[Unplaced] = (),
         folium.PolyLine([t.stop.point for t in schedule.times], color=colour,
                         weight=4, opacity=0.8, tooltip=tour_id).add_to(layer)
         last = len(schedule.times)
+        labels = end_labels(schedule.times[0].stop.point, schedule.times[-1].stop.point)
         number = 0
         for seq, t in enumerate(schedule.times, start=1):
             is_depot = seq in (1, last) and not t.stop.is_new
             if not is_depot:
                 number += 1
+            label = labels[0 if seq == 1 else 1] if is_depot else str(number)
             folium.Marker(
                 t.stop.point,
-                icon=_icon("D" if is_depot else str(number), colour,
+                icon=_icon(label, colour,
                            t.stop.is_new, is_depot),
                 popup=folium.Popup(_popup(tour_id, seq, t, t.stop.stop_id in moved),
                                    max_width=260),
@@ -134,6 +145,7 @@ def _legend(title: str) -> str:
         'box-shadow:0 1px 4px rgba(0,0,0,.3);font:12px sans-serif;">'
         f"<b>{html.escape(title)}</b><br>"
         "numbers = driving order, D = depot<br>"
+        "S / E = start / end at another place<br>"
         "black ring = new stop<br>"
                 f'<span style="color:{UNPLACED_COLOUR};font-weight:bold">✕</span>'
         " = not placed<br>"

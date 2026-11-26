@@ -190,3 +190,30 @@ class TestPlanner:
     def test_duplicate_ids_rejected(self, grid):
         with pytest.raises(ValueError):
             insert_orders(self.make_tours(), [stop("W1", 0, 0)], grid)
+
+
+# --- end at a connection point instead of the depot -------------------------
+
+class TestConnectionPoint:
+    """Tour D(0,0) 08:00 -> A(0,1000) -> C(2000,1000), C is a connection
+    point (hand-over, train) with its own time window, not the depot."""
+
+    def tour(self, c_end=None):
+        return Tour("t1", (stop("D", 0, 0, tw_start=480),
+                           stop("A", 0, 1000),
+                           stop("C", 2000, 1000, tw_end=c_end)))
+
+    def test_new_stop_goes_before_the_connection_point(self, grid):
+        order = stop("N", 1000, 1000, new=True)
+        result = insert_orders({"t1": self.tour()}, [order], grid)
+        ids = [s.stop_id for s in result.tours["t1"].stops]
+        assert ids == ["D", "A", "N", "C"]
+
+    def test_time_window_at_the_connection_point_is_kept(self, grid):
+        # D -> A 10 min, A -> C 20 min: arrival at C 08:30.
+        # Detour via N(1000,2000): A->N 15, N->C 15 -> C at 08:40.
+        order = stop("N", 1000, 2000, new=True)
+        late = insert_orders({"t1": self.tour(c_end=480 + 35)}, [order], grid)
+        assert [u.order_id for u in late.unplaced] == ["N"]
+        ok = insert_orders({"t1": self.tour(c_end=480 + 40)}, [order], grid)
+        assert [s.stop_id for s in ok.tours["t1"].stops] == ["D", "A", "N", "C"]

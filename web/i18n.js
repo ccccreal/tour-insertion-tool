@@ -114,6 +114,11 @@ const TEXT = {
   col_items: { de: "Items", fr: "Colis", en: "Items" },
   items_short: { de: "Items", fr: "colis", en: "items" },
   depot: { de: "Depot", fr: "Dépôt", en: "Depot" },
+  role_D: { de: "Depot (Start und Ende)", fr: "Dépôt (départ et fin)", en: "Depot (start and end)" },
+  until: { de: "spätestens", fr: "au plus tard", en: "at the latest" },
+  role_S: { de: "Start", fr: "Départ", en: "Start" },
+  role_E: { de: "Ende / Anschluss", fr: "Fin / correspondance", en: "End / connection" },
+  ex_anschluss: { de: "Winterthur mit Anschlussort (Ende ≠ Start)", fr: "Winterthour avec point de correspondance (fin ≠ départ)", en: "Winterthur with connection point (end ≠ start)" },
   place_on_map: { de: "Auf Karte setzen", fr: "Placer sur la carte", en: "Place on map" },
   place_hint: {
     de: "Mit «Auf Karte setzen» klickst du die richtige Stelle auf der Karte an. Der Stopp wird dann in seine Tour eingefügt, wo er am wenigsten Umweg kostet.",
