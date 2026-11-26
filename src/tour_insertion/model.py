@@ -26,8 +26,10 @@ class Stop:
     tw_start   earliest start of service; arriving earlier means waiting
     tw_end     latest start of service; None = no limit
     is_new     True for stops inserted by this tool (overnight orders)
-    items      number of items (parcels) dropped at this stop; only shown,
-               not used in the planning (no capacities). None = not given
+    items      number of items (parcels) at this stop. None = not given
+               (counts as 0 for the capacity check, see load.py)
+    kind       "drop" (items are delivered here, the default) or "pickup"
+               (items are collected here and carried to the end of the tour)
     """
 
     stop_id: str
@@ -40,6 +42,7 @@ class Stop:
     service_min: int = 0
     is_new: bool = False
     items: int | None = None
+    kind: str = "drop"
 
     @property
     def point(self) -> Point:
@@ -51,10 +54,16 @@ class Stop:
 
 @dataclass(frozen=True, slots=True)
 class Tour:
-    """A planned stop sequence, without times (times live in Schedule)."""
+    """A planned stop sequence, without times (times live in Schedule).
+
+    vehicle    name of the vehicle type ("" = not given)
+    capacity   most items the vehicle can carry at once (None = no limit)
+    """
 
     tour_id: str
     stops: tuple[Stop, ...] = ()
+    vehicle: str = ""
+    capacity: int | None = None
 
     def __len__(self) -> int:
         return len(self.stops)

@@ -144,7 +144,7 @@ def test_insert_endpoint_places_a_stop(client):
     late = dict(stop, tw_end=481)
     r = client.post("/api/insert", json={"settings": body["settings"], "tours": body["tours"],
                                          "stop": late})
-    assert r.json() == {"inserted": False}
+    assert r.json() == {"inserted": False, "reason": "no_feasible_position"}
     # same id twice -> 400
     dup = dict(stop, stop_id="T1-01")
     assert client.post("/api/insert", json={"tours": body["tours"], "stop": dup}).status_code == 400
@@ -156,3 +156,31 @@ def test_geocode_failure_keeps_details_for_manual_placing(client):
     body = plan(client, (EXAMPLES / "winterthur/tours.csv").read_bytes(), orders).json()
     u = body["unplaced"][0]
     assert (u["order_id"], u["lat"], u["tw_end"], u["service_min"], u["items"]) == ("N9", None, 600, 5, 7)
+
+
+def test_vehicles_capacity_and_kind(client):
+    tours = ("tour_id,seq,stop_id,address,country,lat,lon,tw_start,tw_end,service_min,items,type,vehicle\n"
+             "T1,0,D,Depot,CH,47.5000,8.7236,08:00,,0,,,Velo\n"
+             "T1,1,A,A,CH,47.4930,8.7180,,,3,6,,\n"
+             "T1,2,E,Depot,CH,47.5000,8.7236,,,0,,,\n").encode()
+    orders = ("order_id,address,country,lat,lon,items,type\n"
+              "N1,P,CH,47.5030,8.7170,3,pickup\n"
+              "N2,Q,CH,47.4990,8.7520,5,drop\n").encode()
+    settings = {"vehicles": {"Velo": {"capacity": 10, "speed_kmh": 15}}}
+    body = plan(client, tours, orders, settings).json()
+    tour = body["tours"][0]
+    assert (tour["vehicle"], tour["capacity"]) == ("Velo", 10)
+    # N1 is a pickup after A (6 dropped first): fits. N2 would make 11 > 10.
+    assert [u["order_id"] for u in body["unplaced"]] == ["N2"]
+    assert body["unplaced"][0]["reason"] == "capacity"
+    kinds = {s["stop_id"]: (s["kind"], s["load"]) for s in tour["stops"]}
+    assert kinds["N1"][0] == "pickup" and tour["max_load"] <= 10
+    assert "load" in body["csv"]["tours"].splitlines()[0]
+    # a manual move that overloads the tour is allowed but flagged
+    n2 = {"stop_id": "N2", "lat": 47.499, "lon": 8.752, "items": 5, "is_new": True}
+    tour["stops"].insert(1, n2)
+    r = client.post("/api/schedule", json={"settings": body["settings"], "tours": [tour]})
+    assert r.json()["tours"][0]["over_capacity"] is True
+    # unknown vehicle -> 400
+    r = plan(client, tours, orders, {"vehicles": {}})
+    assert r.status_code == 400 and "Velo" in r.json()["detail"]

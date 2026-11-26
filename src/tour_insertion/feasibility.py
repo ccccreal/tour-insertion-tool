@@ -1,8 +1,9 @@
 """Feasibility check: does a schedule respect all time windows?
 
 Adapted from pa-decision-support (src/env/zulaessig.py, as of 2026-11-20).
-Only one condition is left from the PA's five: the time window. There are no
-pickup/delivery pairs, capacities, shifts or vehicle types here.
+This module checks the time windows only. Capacity is checked separately
+(load.py, used in insertion.py and optimize.py). There are no pickup/delivery
+pairs and no shifts here.
 
 Existing violations
 -------------------

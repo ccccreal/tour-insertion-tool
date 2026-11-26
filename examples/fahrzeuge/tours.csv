@@ -1,0 +1,15 @@
+tour_id,seq,stop_id,address,country,lat,lon,tw_start,tw_end,service_min,items,type,vehicle
+T1,0,T1-00,Depot Winterthur HB,CH,47.5000,8.7236,08:00,,0,,,Lastenvelo
+T1,1,T1-01,Zuercherstrasse (Toess),CH,47.4865,8.7085,,,3,3,drop,
+T1,2,T1-02,Toessfeld,CH,47.4930,8.7180,,10:00,3,2,drop,
+T1,3,T1-03,Neuwiesen,CH,47.5030,8.7170,,,3,2,drop,
+T1,4,T1-04,Wuelflingen,CH,47.5100,8.6900,09:00,11:00,3,1,drop,
+T1,5,T1-05,Veltheim,CH,47.5130,8.7130,,,3,2,pickup,
+T1,99,T1-99,Depot Winterthur HB,CH,47.5000,8.7236,,,0,,,
+T2,0,T2-00,Depot Winterthur HB,CH,47.5000,8.7236,08:00,,0,,,Auto
+T2,1,T2-01,Rosenberg,CH,47.5110,8.7330,,,3,6,drop,
+T2,2,T2-02,Oberwinterthur,CH,47.5130,8.7590,,09:30,3,12,drop,
+T2,3,T2-03,Hegi,CH,47.5050,8.7800,,,3,5,pickup,
+T2,4,T2-04,Seen,CH,47.4880,8.7630,,,3,8,drop,
+T2,5,T2-05,Mattenbach,CH,47.4950,8.7480,,,3,4,drop,
+T2,99,T2-99,Depot Winterthur HB,CH,47.5000,8.7236,,,0,,,

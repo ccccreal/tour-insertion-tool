@@ -17,7 +17,8 @@ orders of equal duration the shorter travel time wins.
 
 A move is only accepted if the new tour is feasible: no stop may become
 late that was not already late in the tour we started from (same rule as
-for insertion, see feasibility.py).
+for insertion, see feasibility.py), and the load must stay within the
+capacity (or, if the tour is already over it, not get higher; see load.py).
 
 This is a heuristic: it finds a GOOD order, not provably the best one. For
 15-30 stops it is close to optimal in practice and takes milliseconds.
@@ -25,7 +26,10 @@ This is a heuristic: it finds a GOOD order, not provably the best one. For
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from tour_insertion.feasibility import late_stops
+from tour_insertion.load import PICKUP, max_load
 from tour_insertion.model import Stop, Tour
 from tour_insertion.schedule import forward_pass
 from tour_insertion.traveltime import TravelModel
@@ -60,13 +64,23 @@ def improve_tour(tour: Tour, model: TravelModel, *, fixed_first: bool = True,
     exact = [[model.travel_exact(a.point, b.point) for b in stops] for a in stops]
     limit = [None if s.tw_end is None or s.stop_id in exempt
              else s.tw_end + tolerance_min for s in stops]
+    # capacity: only pickups make the order matter (see load.py)
+    room = None
+    if tour.capacity is not None and any(s.kind == PICKUP for s in stops):
+        room = max(tour.capacity, max_load(stops))
+    change = [(s.items or 0) if s.kind == PICKUP else -(s.items or 0) for s in stops]
+    first_load = sum(s.items or 0 for s in stops if s.kind != PICKUP)
 
     def evaluate(order: tuple[int, ...]) -> float | None:
         """Duration (+ tiny travel tie-break), or None if infeasible."""
         first = stops[order[0]]
         t = start_time if start_time is not None else (first.tw_start or 0)
-        begin, prev, travel = None, None, 0.0
+        begin, prev, travel, load = None, None, 0.0, first_load
         for i in order:
+            if room is not None:
+                load += change[i]
+                if load > room:
+                    return None
             s = stops[i]
             if prev is not None:
                 t += minutes[prev][i]
@@ -94,7 +108,7 @@ def improve_tour(tour: Tour, model: TravelModel, *, fixed_first: bool = True,
                 break                             # first improvement
         if not improved:
             break
-    return Tour(tour.tour_id, tuple(stops[i] for i in order))
+    return replace(tour, stops=tuple(stops[i] for i in order))
 
 
 def _neighbours(stops: tuple, lo: int, hi: int):

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from tour_insertion.csv_io import (format_time, read_rows, write_geocoding,
                                    write_schedules, write_skipped,
                                    write_unplaced)
 from tour_insertion.geocoding import Geocoder
+from tour_insertion.load import max_load, over_capacity
 from tour_insertion.pipeline import InputError, Settings, make_geocoder, run
 
 
@@ -39,6 +41,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="allow inserting after the last stop")
     p.add_argument("--optimize", action="store_true",
                    help="also improve the stop order within every tour")
+    p.add_argument("--vehicles", type=Path, default=None,
+                   help="JSON file with vehicle types: {name: {capacity, "
+                        "speed_kmh}} (default: Lastenvelo 10 items 15 km/h, "
+                        "Auto 40 items 20 km/h)")
     p.add_argument("--min-score", type=float, default=d.min_score,
                    help="minimum geocoding score for France (default 0.5)")
     p.add_argument("--geocode-cache", type=Path,
@@ -49,9 +55,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None, geocoder: Geocoder | None = None) -> int:
     args = build_parser().parse_args(argv)
+    vehicles = Settings().vehicles
+    if args.vehicles is not None:
+        try:
+            vehicles = json.loads(args.vehicles.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as error:
+            raise SystemExit(f"cannot read {args.vehicles}: {error}") from error
     settings = Settings(args.detour_factor, args.speed, args.service_min,
                         args.tolerance_min, args.open_start, args.open_end,
-                        args.min_score, args.optimize)
+                        args.min_score, args.optimize, vehicles)
     try:
         result = run(read_rows(args.tours), read_rows(args.orders), settings,
                      geocoder or make_geocoder(settings, args.geocode_cache))
@@ -90,8 +102,14 @@ def main(argv: list[str] | None = None, geocoder: Geocoder | None = None) -> int
     for u in result.skipped:
         print(f"  {u.order_id:<10} SKIPPED in tour {u.tour_id} ({u.reason}): {u.address}")
     for s in result.schedules:
+        load = ""
+        if s.tour.vehicle or s.tour.capacity is not None:
+            used = max_load(s.tour.stops)
+            limit = "" if s.tour.capacity is None else f"/{s.tour.capacity}"
+            over = "  OVER CAPACITY" if over_capacity(s.tour) else ""
+            load = f", {s.tour.vehicle or 'vehicle'} load {used}{limit}{over}"
         print(f"  {s.tour.tour_id:<8} {len(s.tour):>2} stops, "
-              f"end {format_time(s.end)}")
+              f"end {format_time(s.end)}{load}")
     if result.changes:
         before = sum(c.minutes_before for c in result.changes)
         after = sum(c.minutes_after for c in result.changes)

@@ -72,6 +72,7 @@ async function init() {
   $("profile").addEventListener("change", () => applyProfile($("profile").value));
   $("run").addEventListener("click", runPlan);
   $("undo").addEventListener("click", undo);
+  $("add-vehicle").addEventListener("click", () => $("vehicles").append(vehicleRow("", {})));
   document.addEventListener("keydown", e => { if (e.key === "Escape" && state.placing) stopPlacing(); });
 
   try {
@@ -116,6 +117,37 @@ function applyProfile(name) {
   $("open-start").checked = !!p.open_start;
   $("open-end").checked = !!p.open_end;
   $("min-score").value = p.min_score;
+  renderVehicles(p.vehicles || {});
+}
+
+// Vehicle types: name, capacity (items), speed (km/h). A tour uses the
+// type named in the 'vehicle' column of the tours file.
+function vehicleRow(name, spec) {
+  const cell = (cls, value, type) => h("td", {}, h("input", {
+    class: cls, type, value: value ?? "", min: type === "number" ? "0" : null,
+    step: cls === "v-speed" ? "0.5" : (type === "number" ? "1" : null) }));
+  const remove = h("button", { type: "button", class: "small-button", title: t("v_remove") }, "✕");
+  const row = h("tr", {}, cell("v-name", name, "text"), cell("v-capacity", spec.capacity, "number"),
+                cell("v-speed", spec.speed_kmh, "number"), h("td", {}, remove));
+  remove.addEventListener("click", () => row.remove());
+  return row;
+}
+
+function renderVehicles(vehicles) {
+  $("vehicles").replaceChildren(...Object.entries(vehicles).map(([n, v]) => vehicleRow(n, v)));
+}
+
+function readVehicles() {
+  const out = {};
+  for (const row of $("vehicles").querySelectorAll("tr")) {
+    const name = row.querySelector(".v-name").value.trim();
+    if (!name) continue;
+    const capacity = row.querySelector(".v-capacity").value.trim();
+    const speed = row.querySelector(".v-speed").value.trim();
+    out[name] = { capacity: capacity === "" ? null : Math.round(Number(capacity)),
+                  speed_kmh: speed === "" ? null : Number(speed) };
+  }
+  return out;
 }
 
 function readSettings() {
@@ -127,7 +159,8 @@ function readSettings() {
     optimize: $("optimize").checked,
     open_start: $("open-start").checked,
     open_end: $("open-end").checked,
-    min_score: Number($("min-score").value)
+    min_score: Number($("min-score").value),
+    vehicles: readVehicles()
   };
 }
 
@@ -198,14 +231,32 @@ function fitMap() {
   if (points.length) map.fitBounds(points, { padding: [30, 30] });
 }
 
-function stopIcon(text, fill, isNew, isDepot, late) {
+// kind: "pickup" -> small ▲ (items go onto the vehicle), "drop" -> ▼.
+// Arrows are only drawn when the plan has pickups at all.
+function stopIcon(text, fill, isNew, isDepot, late, kind) {
   const size = isNew ? 26 : 20;
   const style = `width:${size}px;height:${size}px;border-radius:${isDepot ? "3px" : "50%"};` +
     `background:${fill};border:${isNew ? "3px solid #000" : "1px solid #fff"}`;
+  const badge = kind && hasPickups()
+    ? `<span class="kind-badge ${kind}">${kind === "pickup" ? "▲" : "▼"}</span>` : "";
   return L.divIcon({
     className: "", iconSize: [size, size], iconAnchor: [size / 2, size / 2],
-    html: `<div class="stop-icon${late ? " late" : ""}" style="${style}">${esc(text)}</div>`
+    html: `<div class="stop-icon${late ? " late" : ""}" style="${style}">${esc(text)}${badge}</div>`
   });
+}
+
+function hasPickups() {
+  return state.tours.some(tr => tr.stops.some(s => s.kind === "pickup")) ||
+         state.unplaced.some(u => u.kind === "pickup");
+}
+
+function kindText(kind) { return kind === "pickup" ? "▲ " + t("pickup") : "▼ " + t("drop"); }
+
+// "Lastenvelo 8/10" or "15 Items" when the tour has no capacity
+function loadText(tour) {
+  if (tour.capacity === null || tour.capacity === undefined)
+    return `${tour.vehicle ? tour.vehicle + " " : ""}${tour.items || 0} ${t("items_short")}`;
+  return `${tour.vehicle} ${tour.max_load}/${tour.capacity}`;
 }
 
 function popupHtml(tour, number, s) {
@@ -213,7 +264,10 @@ function popupHtml(tour, number, s) {
     esc(s.address),
     `${esc(t("col_tour"))} ${esc(tour.tour_id)}, ${esc(t("stop_word"))} ${number}`,
     `${esc(t("col_arrival"))} ${hhmm(s.arrival)}`];
+  if (hasPickups()) lines.push(esc(kindText(s.kind)));
   if (s.items !== null && s.items !== undefined) lines.push(`${esc(t("col_items"))}: ${s.items}`);
+  if (tour.capacity !== null && tour.capacity !== undefined)
+    lines.push(`${esc(t("on_board"))}: ${s.load}/${tour.capacity}`);
   if (s.tw_start !== null || s.tw_end !== null)
     lines.push(`${esc(t("col_window"))} ${hhmm(s.tw_start) || "…"}–${hhmm(s.tw_end) || "…"}`);
   if (s.slack !== null && s.slack !== undefined) lines.push(`${esc(t("col_slack"))}: ${s.slack}`);
@@ -329,7 +383,7 @@ function renderMap() {
     let marker;
     if (e.kind === "tour") {
       marker = L.marker(e.pos, {
-        icon: stopIcon(String(e.number), e.fill, e.s.is_new, false, e.s.late),
+        icon: stopIcon(String(e.number), e.fill, e.s.is_new, false, e.s.late, e.s.kind),
         draggable: true, title: `${e.tour.tour_id} #${e.number}: ${e.s.stop_id}`,
         zIndexOffset: e.s.is_new ? 500 : 0
       }).bindPopup(popupHtml(e.tour, e.number, e.s));
@@ -341,6 +395,7 @@ function renderMap() {
         icon: L.divIcon({ className: "", iconSize: [26, 26], iconAnchor: [13, 13],
                           html: '<div class="unplaced-icon">✕</div>' })
       }).bindPopup(`<b>${esc(u.order_id)}</b> – ${esc(t("m_unplaced"))}<br>${esc(u.address)}<br>` +
+                   (hasPickups() ? `${esc(kindText(u.kind))}<br>` : "") +
                    (u.items !== null && u.items !== undefined ? `${esc(t("col_items"))}: ${u.items}<br>` : "") +
                    `${esc(t(u.reason))}<br><i>${esc(t("unplaced_hint"))}</i>`);
       attachDrag(marker, { kind: "unplaced", index: e.j });
@@ -363,7 +418,9 @@ function renderLegend() {
         renderMap();
       });
       box.append(h("label", {}, box_, h("span", { class: "dot", style: `background:${colour(ti)}` }),
-        `${tour.tour_id} · ${tour.stops.length} · ${tour.items || 0} ${t("items_short")} · ${hhmm(tour.end)}`));
+        h("span", {}, `${tour.tour_id} · ${tour.stops.length} · `,
+          h("span", { class: tour.over_capacity ? "over" : null }, loadText(tour)),
+          ` · ${hhmm(tour.end)}`)));
     });
     L.DomEvent.disableClickPropagation(box);
     L.DomEvent.disableScrollPropagation(box);
@@ -442,7 +499,7 @@ async function moveStop(source, target) {
     stop = { stop_id: u.order_id, address: u.address, country: u.country, lat: u.lat, lon: u.lon,
              tw_start: u.tw_start, tw_end: u.tw_end,
              service_min: u.service_min ?? state.settings.service_min, items: u.items ?? null,
-             is_new: true };
+             kind: u.kind || "drop", is_new: true };
   }
   stop.moved = true;
   tours[target.tourIndex].stops.splice(at, 0, stop);
@@ -465,7 +522,9 @@ async function moveStop(source, target) {
       .filter(tr => tr.tour_id === from || tr.tour_id === to)
       .map(tr => { const d = tr.duration - (oldDuration[tr.tour_id] ?? tr.duration);
                    return `${tr.tour_id} ${d >= 0 ? "+" : ""}${d} min`; }).join(", ");
-    toast(t("moved_toast", { stop: stop.stop_id, from, to, deltas }));
+    const full = data.tours.find(tr => tr.tour_id === to && tr.over_capacity);
+    toast(t("moved_toast", { stop: stop.stop_id, from, to, deltas }) +
+          (full ? " " + t("over_toast", { tour: to, load: `${full.max_load}/${full.capacity}` }) : ""));
   } catch (e) {
     showError(t("error") + "\n" + e);
   }
@@ -503,7 +562,7 @@ async function placeAt(latlng) {
   const stop = { stop_id: entry.order_id, address: entry.address, country: entry.country, lat, lon,
                  tw_start: entry.tw_start, tw_end: entry.tw_end,
                  service_min: entry.service_min ?? state.settings.service_min,
-                 items: entry.items ?? null, is_new: kind === "unplaced" };
+                 items: entry.items ?? null, kind: entry.kind || "drop", is_new: kind === "unplaced" };
   try {
     const response = await fetch("api/insert", {
       method: "POST", headers: { "Content-Type": "application/json" },
@@ -523,11 +582,11 @@ async function placeAt(latlng) {
     } else {
       // No feasible position: keep it as a not-placed order, now with a position,
       // so that it can be dragged onto a tour by hand.
-      const u = Object.assign({}, entry, { lat, lon, reason: "no_feasible_position", tour_id: "" });
+      const u = Object.assign({}, entry, { lat, lon, reason: data.reason || "no_feasible_position", tour_id: "" });
       if (kind === "unplaced") state.unplaced = state.unplaced.map((x, j) => j === index ? u : x);
       else { state.skipped = skipped; state.unplaced = [...state.unplaced, u]; }
       state.placed.add(stop.stop_id);
-      toast(t("not_inserted", { stop: stop.stop_id }));
+      toast(t(data.reason === "capacity" ? "not_inserted_capacity" : "not_inserted", { stop: stop.stop_id }));
     }
   } catch (e) {
     showError(t("error") + "\n" + e);
@@ -590,6 +649,9 @@ function renderWarnings() {
   if (state.skipped.length) items.push(h("div", { class: "warning" }, t("skipped_warn", { n: state.skipped.length })));
   const late = lateCount();
   if (late) items.push(h("div", { class: "warning" }, t("late_warn", { n: late })));
+  const over = state.tours.filter(tr => tr.over_capacity);
+  if (over.length) items.push(h("div", { class: "warning" }, t("over_warn", {
+    tours: over.map(tr => `${tr.tour_id} (${tr.max_load}/${tr.capacity})`).join(", ") })));
   $("warnings").replaceChildren(...items);
 }
 
@@ -604,9 +666,9 @@ function renderOpen() {
   }
   if (state.unplaced.length) {
     parts.push(h("h3", {}, `${t("unplaced")} (${state.unplaced.length})`),
-      table([t("col_order"), t("col_address"), t("col_items"), t("col_reason"), ""],
+      table([t("col_order"), t("col_address"), t("col_type"), t("col_items"), t("col_reason"), ""],
         state.unplaced.map((u, j) => h("tr", {}, h("td", {}, u.order_id), h("td", {}, u.address),
-          h("td", {}, u.items ?? ""), h("td", {}, t(u.reason)),
+          h("td", {}, kindText(u.kind)), h("td", {}, u.items ?? ""), h("td", {}, t(u.reason)),
           h("td", {}, u.lat === null || u.lat === undefined ? placeButton("unplaced", j) : null)))),
       state.unplaced.some(u => u.lat !== null && u.lat !== undefined)
         ? h("p", { class: "small muted" }, t("unplaced_hint")) : null);
@@ -657,12 +719,14 @@ function renderTables() {
     const window_ = (s.tw_start !== null || s.tw_end !== null)
       ? `${hhmm(s.tw_start) || "…"}–${hhmm(s.tw_end) || "…"}` : "";
     all.push(h("tr", {}, h("td", {}, tr.tour_id), h("td", {}, k), h("td", {}, s.stop_id),
-      h("td", {}, marks), h("td", {}, s.address), h("td", {}, s.items ?? ""),
+      h("td", {}, marks), h("td", {}, s.address), h("td", {}, kindText(s.kind)), h("td", {}, s.items ?? ""),
+      h("td", { class: tr.capacity !== null && s.load > tr.capacity ? "late" : null }, s.load),
       h("td", { class: s.late ? "late" : null }, hhmm(s.arrival)),
       h("td", {}, window_), h("td", {}, s.slack ?? "")));
   }));
   parts.push(h("details", {}, h("summary", {}, t("all_tours")),
-    table([t("col_tour"), "#", t("col_stop"), "", t("col_address"), t("col_items"), t("col_arrival"),
+    table([t("col_tour"), "#", t("col_stop"), "", t("col_address"), t("col_type"), t("col_items"),
+           t("on_board"), t("col_arrival"),
            t("col_window"), t("col_slack")], all)));
 
   if (state.geocoding.length) {

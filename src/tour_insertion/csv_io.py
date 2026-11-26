@@ -1,13 +1,15 @@
 """Read tours and orders from CSV, write results to CSV.
 
 tours.csv   tour_id, seq, stop_id, address, country, lat, lon,
-            tw_start, tw_end, service_min, items
+            tw_start, tw_end, service_min, items, type, vehicle
 orders.csv  order_id, address, country, lat, lon, tw_start, tw_end,
-            service_min, items
+            service_min, items, type
 
 Times are "HH:MM". Empty cells are allowed for address, country, tw_start,
-tw_end, service_min (then the default service time is used) and items
-(number of items/parcels at the stop, only shown, not planned with).
+tw_end, service_min (then the default service time is used), items
+(number of items/parcels at the stop), type ("drop" or "pickup", empty =
+drop) and vehicle (vehicle type of the tour; given on at least one row of
+the tour, e.g. the first; see vehicles in pipeline.Settings).
 lat/lon may be empty: then the address is geocoded (see geocoding.py).
 """
 
@@ -20,6 +22,7 @@ from pathlib import Path
 from typing import IO
 
 from tour_insertion.geocoding import GeocodeResult
+from tour_insertion.load import DROP, KINDS, load_after
 from tour_insertion.model import Schedule, Stop, Tour
 from tour_insertion.planner import Unplaced
 
@@ -52,6 +55,7 @@ def _stop_from_row(row: dict[str, str], id_column: str, default_service: int,
     try:
         service_min = int(service) if service else default_service
         items = parse_items(row.get("items"))
+        kind = parse_kind(row.get("type"))
     except ValueError as error:
         raise ValueError(f"{where}: {error}") from None
     return Stop(
@@ -65,7 +69,18 @@ def _stop_from_row(row: dict[str, str], id_column: str, default_service: int,
         service_min=service_min,
         is_new=is_new,
         items=items,
+        kind=kind,
     )
+
+
+def parse_kind(text: str | None) -> str:
+    """'pickup' / 'drop' (any case), '' -> 'drop'."""
+    value = (text or "").strip().lower()
+    if not value:
+        return DROP
+    if value not in KINDS:
+        raise ValueError(f"type must be 'drop' or 'pickup', got {text!r}")
+    return value
 
 
 def parse_items(text: str | None) -> int | None:
@@ -88,11 +103,15 @@ def unplaced_from_row(row: dict[str, str], id_column: str, reason: str,
         service_min = int(service) if service else default_service
     except ValueError:
         items, service_min = None, default_service
+    try:
+        kind = parse_kind(row.get("type"))
+    except ValueError:
+        kind = DROP
     return Unplaced((row.get(id_column) or "").strip(),
                     (row.get("address") or "").strip(), reason, None,
                     parse_time(row.get("tw_start")), parse_time(row.get("tw_end")),
                     tour_id, service_min, items,
-                    (row.get("country") or "").strip().upper())
+                    (row.get("country") or "").strip().upper(), kind)
 
 
 def read_rows(source: str | Path | IO[str], name: str | None = None
@@ -120,8 +139,10 @@ def read_rows_text(text: str, name: str = "upload") -> list[dict[str, str]]:
 
 def tours_from_rows(rows: list[dict[str, str]],
                     default_service: int = 3) -> dict[str, Tour]:
-    """tour_id -> Tour, stops sorted by seq."""
+    """tour_id -> Tour, stops sorted by seq. Vehicle from the 'vehicle'
+    column (capacity is set later, from the vehicle types)."""
     grouped: dict[str, list[tuple[int, Stop]]] = defaultdict(list)
+    vehicles: dict[str, str] = {}
     for row in rows:
         where = row.get("_where", "tours")
         tour_id = (row.get("tour_id") or "").strip()
@@ -134,10 +155,16 @@ def tours_from_rows(rows: list[dict[str, str]],
                              f"got {row.get('seq')!r}") from None
         stop = _stop_from_row(row, "stop_id", default_service, False, where)
         grouped[tour_id].append((seq, stop))
+        vehicle = (row.get("vehicle") or "").strip()
+        if vehicle:
+            if vehicles.setdefault(tour_id, vehicle) != vehicle:
+                raise ValueError(f"{where}: tour {tour_id} has two vehicles: "
+                                 f"{vehicles[tour_id]!r} and {vehicle!r}")
     tours = {}
     for tour_id, items in grouped.items():
         items.sort(key=lambda item: item[0])
-        tours[tour_id] = Tour(tour_id, tuple(stop for _, stop in items))
+        tours[tour_id] = Tour(tour_id, tuple(stop for _, stop in items),
+                              vehicle=vehicles.get(tour_id, ""))
     return tours
 
 
@@ -158,9 +185,9 @@ def read_orders(path: str | Path, default_service: int = 3) -> list[Stop]:
     return orders_from_rows(read_rows(path), default_service)
 
 
-TOUR_COLUMNS = ["tour_id", "seq", "stop_id", "is_new", "moved", "address",
-                "country", "lat", "lon", "items", "arrival", "departure",
-                "tw_start", "tw_end", "slack_min"]
+TOUR_COLUMNS = ["tour_id", "vehicle", "seq", "stop_id", "is_new", "moved",
+                "type", "address", "country", "lat", "lon", "items", "load",
+                "arrival", "departure", "tw_start", "tw_end", "slack_min"]
 
 
 def schedules_to_csv(schedules: list[Schedule],
@@ -170,15 +197,16 @@ def schedules_to_csv(schedules: list[Schedule],
     writer = csv.DictWriter(out, fieldnames=TOUR_COLUMNS, lineterminator="\n")
     writer.writeheader()
     for schedule in schedules:
-        for seq, t in enumerate(schedule.times, start=1):
+        loads = load_after([t.stop for t in schedule.times])
+        for seq, (t, load) in enumerate(zip(schedule.times, loads), start=1):
             s = t.stop
             writer.writerow({
-                "tour_id": schedule.tour.tour_id, "seq": seq,
-                "stop_id": s.stop_id, "is_new": int(s.is_new),
-                "moved": int(s.stop_id in moved),
+                "tour_id": schedule.tour.tour_id, "vehicle": schedule.tour.vehicle,
+                "seq": seq, "stop_id": s.stop_id, "is_new": int(s.is_new),
+                "moved": int(s.stop_id in moved), "type": s.kind,
                 "address": s.address, "country": s.country,
                 "lat": s.lat, "lon": s.lon,
-                "items": "" if s.items is None else s.items,
+                "items": "" if s.items is None else s.items, "load": load,
                 "arrival": format_time(t.arrival),
                 "departure": format_time(t.departure),
                 "tw_start": format_time(s.tw_start),
@@ -191,9 +219,9 @@ def schedules_to_csv(schedules: list[Schedule],
 def unplaced_to_csv(unplaced: list[Unplaced]) -> str:
     out = io.StringIO()
     writer = csv.writer(out, lineterminator="\n")
-    writer.writerow(["order_id", "address", "items", "tw_start", "tw_end", "reason"])
+    writer.writerow(["order_id", "type", "address", "items", "tw_start", "tw_end", "reason"])
     for u in unplaced:
-        writer.writerow([u.order_id, u.address, "" if u.items is None else u.items,
+        writer.writerow([u.order_id, u.kind, u.address, "" if u.items is None else u.items,
                          format_time(u.tw_start), format_time(u.tw_end), u.reason])
     return out.getvalue()
 

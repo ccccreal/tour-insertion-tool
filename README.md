@@ -92,9 +92,12 @@ drop). It still runs the demo on Streamlit Community Cloud (main file path
 | lat, lon | WGS84 coordinates; if empty, the address is geocoded |
 | tw_start, tw_end | time window `HH:MM`, optional |
 | service_min | minutes at the stop, optional (default `--service-min`) |
-| items | number of parcels/items unloaded at the stop, optional; shown only, no capacity check |
+| items | number of parcels/items at the stop, optional (empty = 0 for the capacity check) |
+| type | `drop` (items are delivered, the default) or `pickup` (items are collected) |
+| vehicle | vehicle type of the tour, on at least one row of the tour (e.g. the first); optional |
 
-`orders.csv`: same columns, with `order_id` instead of `tour_id, seq, stop_id`.
+`orders.csv`: same columns, with `order_id` instead of `tour_id, seq, stop_id`
+(and without `vehicle`).
 
 The first stop's `tw_start` is the start time of the tour.
 
@@ -105,6 +108,33 @@ give the last stop its own address and, if it must be reached in time, a
 a round trip is marked **D**; a tour that ends elsewhere has **S** (start)
 and **E** (end), and E turns red when the tour arrives too late.
 Example: `examples/anschluss/`.
+
+## Vehicles and capacity
+
+A tour's `vehicle` names a vehicle type. Each type has a capacity (most
+items on board at once) and its own speed. Defaults (assumptions):
+
+| type | capacity | speed |
+|---|---|---|
+| Lastenvelo (cargo bike with trailer) | 10 items | 15 km/h |
+| Auto (car) | 40 items | 20 km/h |
+
+Change them in the web page (*Vehicles*) or with `--vehicles file.json`,
+e.g. `{"Lastenvelo": {"capacity": 10, "speed_kmh": 15}}`. Empty capacity
+= no limit, empty speed = the general speed. A tour without vehicle has no
+limit. An unknown vehicle name stops the run with an error.
+
+Load along a tour (assumption): all items to be **dropped** are loaded at
+the start; items **picked up** stay on board until the end of the tour.
+The load must never be above the capacity. With drops only this is just
+the sum of items; with pickups the order matters, so a pickup is placed
+where enough has already been delivered. An order that would fit in time
+but finds no room gets the reason `capacity`. Moving a stop by hand may
+overload a tour: the page then shows the tour in red and a warning.
+
+On the map, when the plan has pickups, each stop shows ▲ (pickup) or ▼
+(drop). `tours_new.csv` has the columns `vehicle`, `type` and `load`
+(items on board after the stop).
 
 ## Geocoding
 
@@ -176,7 +206,8 @@ Detour factor and speed are assumptions, not measured for any city.
 3. ~~Map of the new tours~~
 4. ~~Web app (Streamlit demo, then API + JavaScript page with drag & drop)~~
 5. ~~Optional reordering within each tour~~
-6. Optional: street-network travel times (OSRM), moving stops between tours
+6. ~~End at a connection point; vehicles with capacity; pickups and drops~~
+7. Optional: street-network travel times (OSRM)
 
 ## Example data
 
@@ -185,6 +216,9 @@ this repository.
 
 - `examples/winterthur/`: 2 tours, 5 orders, with approximate coordinates
   (runs offline). Order N5 cannot be reached in time on purpose.
+- `examples/fahrzeuge/`: a cargo bike (10 items) and a car (40 items),
+  with pickups. N3 lies on the bike's route, but the bike is too full, so
+  the car takes it.
 - `examples/anschluss/`: the same tours, but each ends at a railway station
   (connection point). T2 must be there by 09:30, so N2 no longer fits.
 - `examples/lyon/`: 2 tours, 7 orders, addresses only (needs internet).

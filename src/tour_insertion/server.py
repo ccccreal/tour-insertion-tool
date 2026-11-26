@@ -38,13 +38,15 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 
-from tour_insertion.csv_io import (format_time, geocoding_to_csv, read_rows_text,
+from tour_insertion.csv_io import (format_time, geocoding_to_csv, parse_kind, read_rows_text,
                                    schedules_to_csv, skipped_to_csv,
                                    unplaced_to_csv)
 from tour_insertion.feasibility import late_stops
+from tour_insertion.load import load_after, max_load, over_capacity
 from tour_insertion.geocoding import Geocoder
 from tour_insertion.model import Schedule, Stop, Tour
-from tour_insertion.pipeline import InputError, RunResult, Settings, make_geocoder, run
+from tour_insertion.pipeline import (DEFAULT_VEHICLES, InputError, RunResult, Settings,
+                                     apply_vehicles, make_geocoder, run)
 from tour_insertion.planner import Unplaced, insert_orders
 from tour_insertion.schedule import forward_pass
 from tour_insertion.traveltime import CrowFlyModel
@@ -56,6 +58,7 @@ WEB = ROOT / "web"
 EXAMPLES = {
     "winterthur": ("winterthur/tours.csv", "winterthur/orders.csv"),
     "anschluss": ("anschluss/tours.csv", "anschluss/orders.csv"),
+    "fahrzeuge": ("fahrzeuge/tours.csv", "fahrzeuge/orders.csv"),
     "zuerich": ("zuerich/tours_zuerich.csv", "zuerich/orders_zuerich.csv"),
     "lyon": ("lyon/tours.csv", "lyon/orders.csv"),
     "paris": ("paris/tours_paris_2.csv", "paris/orders_paris_2.csv"),
@@ -72,10 +75,36 @@ def settings_from_json(data: dict | None) -> Settings:
     """Settings from a dict; unknown keys are ignored, missing keep defaults."""
     data = data or {}
     known = {f.name for f in fields(Settings)}
+    values = {k: v for k, v in data.items() if k in known}
+    if "vehicles" in values:
+        values["vehicles"] = vehicles_from_json(values["vehicles"])
     try:
-        return Settings(**{k: v for k, v in data.items() if k in known})
+        return Settings(**values)
     except TypeError as error:
         raise InputError(f"bad settings: {error}") from error
+
+
+def vehicles_from_json(data) -> dict:
+    """{name: {capacity, speed_kmh}}; empty values = no limit / default speed."""
+    if not isinstance(data, dict):
+        raise InputError("bad settings: vehicles must be an object")
+    out = {}
+    for name, spec in data.items():
+        name = str(name).strip()
+        if not name:
+            continue
+        spec = spec if isinstance(spec, dict) else {}
+        try:
+            capacity = spec.get("capacity")
+            speed = spec.get("speed_kmh")
+            capacity = None if capacity in (None, "") else int(capacity)
+            speed = None if speed in (None, "") else float(speed)
+        except (TypeError, ValueError) as error:
+            raise InputError(f"bad vehicle {name!r}: {error}") from error
+        if (capacity is not None and capacity < 0) or (speed is not None and speed <= 0):
+            raise InputError(f"bad vehicle {name!r}: capacity >= 0 and speed > 0 needed")
+        out[name] = {"capacity": capacity, "speed_kmh": speed}
+    return out
 
 
 def stop_from_json(d: dict) -> Stop:
@@ -85,16 +114,37 @@ def stop_from_json(d: dict) -> Stop:
                     tw_start=d.get("tw_start"), tw_end=d.get("tw_end"),
                     service_min=int(d.get("service_min") or 0),
                     is_new=bool(d.get("is_new")),
-                    items=None if d.get("items") in (None, "") else int(d["items"]))
+                    items=None if d.get("items") in (None, "") else int(d["items"]),
+                    kind=parse_kind(d.get("kind")))
     except (KeyError, TypeError, ValueError) as error:
         raise InputError(f"bad stop {d!r}: {error}") from error
+
+
+def tours_from_json(data: list | None, settings: Settings
+                    ) -> tuple[dict[str, Tour], set[str], CrowFlyModel, dict]:
+    """Tours as sent by the page; capacity and speed come from the vehicle
+    types in the settings (same rules as for a planning run)."""
+    tours, moved = {}, set()
+    for t in data or []:
+        stops = tuple(stop_from_json(d) for d in t.get("stops") or [])
+        moved |= {d["stop_id"] for d in t.get("stops") or [] if d.get("moved")}
+        tour_id = str(t.get("tour_id"))
+        tours[tour_id] = Tour(tour_id, stops, vehicle=str(t.get("vehicle") or ""))
+    tours, model, models = apply_vehicles(tours, settings)
+    return tours, moved, model, models
 
 
 def schedule_json(s: Schedule, tolerance_min: int,
                   moved: frozenset[str] = frozenset()) -> dict:
     late = late_stops(s, tolerance_min)
+    stops = [t.stop for t in s.times]
+    loads = load_after(stops)
     return {
         "tour_id": s.tour.tour_id,
+        "vehicle": s.tour.vehicle,
+        "capacity": s.tour.capacity,
+        "max_load": max_load(stops),
+        "over_capacity": over_capacity(s.tour),
         "items": sum(t.stop.items or 0 for t in s.times),
         "start": s.times[0].arrival if s.times else None,
         "end": s.end,
@@ -104,11 +154,11 @@ def schedule_json(s: Schedule, tolerance_min: int,
             "country": t.stop.country, "lat": t.stop.lat, "lon": t.stop.lon,
             "tw_start": t.stop.tw_start, "tw_end": t.stop.tw_end,
             "service_min": t.stop.service_min, "is_new": t.stop.is_new,
-            "items": t.stop.items,
+            "items": t.stop.items, "kind": t.stop.kind, "load": load,
             "arrival": t.arrival, "departure": t.departure,
             "arrival_hhmm": format_time(t.arrival), "slack": t.slack,
             "late": t.stop.stop_id in late, "moved": t.stop.stop_id in moved,
-        } for t in s.times],
+        } for t, load in zip(s.times, loads)],
     }
 
 
@@ -116,10 +166,10 @@ def unplaced_json(u: Unplaced) -> dict:
     d = {"order_id": u.order_id, "address": u.address, "reason": u.reason,
          "tour_id": u.tour_id, "tw_start": u.tw_start, "tw_end": u.tw_end,
          "lat": None, "lon": None, "country": u.country,
-         "service_min": u.service_min, "items": u.items}
+         "service_min": u.service_min, "items": u.items, "kind": u.kind}
     if u.stop is not None:
         d.update(lat=u.stop.lat, lon=u.stop.lon, country=u.stop.country,
-                 service_min=u.stop.service_min, items=u.stop.items)
+                 service_min=u.stop.service_min, items=u.stop.items, kind=u.stop.kind)
     return d
 
 
@@ -130,7 +180,7 @@ def unplaced_from_json(d: dict) -> Unplaced:
     return Unplaced(str(d.get("order_id") or ""), d.get("address") or "",
                     d.get("reason") or "", stop, d.get("tw_start"), d.get("tw_end"),
                     d.get("tour_id") or "", d.get("service_min"), d.get("items"),
-                    d.get("country") or "")
+                    d.get("country") or "", parse_kind(d.get("kind")))
 
 
 def result_json(r: RunResult, settings: Settings) -> dict:
@@ -201,6 +251,8 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
     def profiles():
         data = json.loads((ROOT / "profiles.json").read_text(encoding="utf-8"))
         data.pop("_comment", None)
+        for profile in data.values():          # profiles without own vehicles
+            profile.setdefault("vehicles", DEFAULT_VEHICLES)
         return data
 
     @app.get("/api/examples")
@@ -249,13 +301,8 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
     @app.post("/api/schedule")
     def schedule(body: dict):
         s = settings_from_json(body.get("settings"))
-        model = CrowFlyModel(s.detour_factor, s.speed_m_per_min)
-        tours, moved = [], set()
-        for t in body.get("tours") or []:
-            stops = tuple(stop_from_json(d) for d in t.get("stops") or [])
-            moved |= {d["stop_id"] for d in t.get("stops") or [] if d.get("moved")}
-            tours.append(Tour(str(t.get("tour_id")), stops))
-        schedules = [forward_pass(t, model) for t in tours]
+        tours, moved, model, models = tours_from_json(body.get("tours"), s)
+        schedules = [forward_pass(t, models.get(i, model)) for i, t in tours.items()]
         unplaced = [unplaced_from_json(d) for d in body.get("unplaced") or []]
         return {
             "tours": [schedule_json(sc, s.tolerance_min, frozenset(moved))
@@ -274,26 +321,22 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
         Returns {"inserted": false} if no tour has a feasible position.
         """
         s = settings_from_json(body.get("settings"))
-        model = CrowFlyModel(s.detour_factor, s.speed_m_per_min)
-        tours, moved = {}, set()
-        for t in body.get("tours") or []:
-            tours[str(t.get("tour_id"))] = Tour(
-                str(t.get("tour_id")), tuple(stop_from_json(d) for d in t.get("stops") or []))
-            moved |= {d["stop_id"] for d in t.get("stops") or [] if d.get("moved")}
+        tours, moved, model, models = tours_from_json(body.get("tours"), s)
         new_stop = stop_from_json(body.get("stop") or {})
         only = body.get("tour_id")
         candidates = {only: tours[only]} if only in tours else tours
         try:
-            result = insert_orders(candidates, [new_stop], model,
+            result = insert_orders(candidates, [new_stop], model, models=models,
                                    fixed_first=not s.open_start, fixed_last=not s.open_end,
                                    tolerance_min=s.tolerance_min)
         except ValueError as error:                   # e.g. id already in a tour
             raise InputError(str(error)) from error
         if not result.inserted:
-            return {"inserted": False}
+            reason = result.unplaced[0].reason if result.unplaced else ""
+            return {"inserted": False, "reason": reason}
         tours.update(result.tours)
         moved.add(new_stop.stop_id)
-        schedules = [forward_pass(tours[t], model) for t in tours]
+        schedules = [forward_pass(tours[t], models.get(t, model)) for t in tours]
         unplaced = [unplaced_from_json(d) for d in body.get("unplaced") or []]
         skipped = [unplaced_from_json(d) for d in body.get("skipped") or []]
         option = result.inserted[0]

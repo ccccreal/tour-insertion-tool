@@ -1,0 +1,7 @@
+order_id,address,country,lat,lon,tw_start,tw_end,service_min,items,type
+N1,Grueze,CH,47.4990,8.7520,,,,2,drop
+N2,Sennhof,CH,47.4720,8.7670,,,,4,drop
+N3,Toess Dorf,CH,47.4840,8.7020,,,,3,drop
+N4,Waldegg,CH,47.5060,8.7000,,09:00,,1,drop
+N5,Schlosstal (pickup),CH,47.4900,8.6950,,,,4,pickup
+N6,Waldegg Werkstatt (pickup),CH,47.5080,8.6960,,,,6,pickup

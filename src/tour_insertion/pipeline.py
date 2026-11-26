@@ -20,7 +20,8 @@ new order                              -> not planned, reported in `unplaced`
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 
 from tour_insertion.csv_io import orders_from_rows, tours_from_rows, unplaced_from_row
 from tour_insertion.geocoding import (NOT_FOUND, FranceGeocoder,
@@ -30,11 +31,20 @@ from tour_insertion.model import InsertionOption, Schedule, Stop, Tour
 from tour_insertion.optimize import improve_tour, moved_stops
 from tour_insertion.planner import Unplaced, insert_orders
 from tour_insertion.schedule import forward_pass
-from tour_insertion.traveltime import CrowFlyModel
+from tour_insertion.traveltime import CrowFlyModel, TravelModel
 
 
 class InputError(ValueError):
     """The input cannot be planned (bad file, depot not found, ...)."""
+
+
+#: Vehicle types used when nothing else is given. Assumptions: a cargo bike
+#: with trailer carries 10 items at 15 km/h (crow-fly x detour), a car 40
+#: items (the cautious end of "40-50") at 20 km/h in town incl. parking.
+DEFAULT_VEHICLES = {
+    "Lastenvelo": {"capacity": 10, "speed_kmh": 15},
+    "Auto": {"capacity": 40, "speed_kmh": 20},
+}
 
 
 @dataclass(frozen=True)
@@ -47,6 +57,36 @@ class Settings:
     open_end: bool = False
     min_score: float = 0.5
     optimize: bool = False
+    # Vehicle types: name -> {"capacity": items, "speed_kmh": km/h}. A tour
+    # gets its type from the 'vehicle' column. Missing capacity = no limit,
+    # missing speed = speed_m_per_min. Tours without a vehicle: no limit.
+    vehicles: Mapping[str, Mapping[str, float | int | None]] = field(
+        default_factory=lambda: {k: dict(v) for k, v in DEFAULT_VEHICLES.items()})
+
+
+def apply_vehicles(tours: Mapping[str, Tour], settings: Settings
+                   ) -> tuple[dict[str, Tour], CrowFlyModel, dict[str, TravelModel]]:
+    """Set each tour's capacity from its vehicle type and build the travel
+    model per tour (vehicles may have their own speed).
+
+    Returns (tours, default model, model per tour_id).
+    """
+    model = CrowFlyModel(settings.detour_factor, settings.speed_m_per_min)
+    unknown = sorted({t.vehicle for t in tours.values()
+                      if t.vehicle and t.vehicle not in settings.vehicles})
+    if unknown:
+        known = ", ".join(sorted(settings.vehicles)) or "none defined"
+        raise InputError(f"unknown vehicle type(s): {', '.join(unknown)} "
+                         f"(known: {known})")
+    out, models = {}, {}
+    for tour_id, tour in tours.items():
+        spec = settings.vehicles.get(tour.vehicle) or {}
+        capacity = spec.get("capacity")
+        out[tour_id] = replace(tour, capacity=None if capacity in (None, "") else int(capacity))
+        speed = spec.get("speed_kmh")
+        if speed not in (None, ""):
+            models[tour_id] = CrowFlyModel(settings.detour_factor, float(speed) * 1000 / 60)
+    return out, model, models
 
 
 @dataclass(frozen=True)
@@ -173,32 +213,36 @@ def run(tour_rows: list[dict], order_rows: list[dict], settings: Settings,
     except (KeyError, ValueError) as error:
         raise InputError(str(error)) from error
 
-    model = CrowFlyModel(settings.detour_factor, settings.speed_m_per_min)
+    tours, model, models = apply_vehicles(tours, settings)
+
+    def model_of(tour_id: str) -> TravelModel:
+        return models.get(tour_id, model)
+
     options = dict(fixed_first=not settings.open_start,
                    fixed_last=not settings.open_end,
                    tolerance_min=settings.tolerance_min)
     try:
-        plain = insert_orders(tours, orders, model, **options)
+        plain = insert_orders(tours, orders, model, models=models, **options)
     except ValueError as error:                       # duplicate ids
         raise InputError(str(error)) from error
 
     if not settings.optimize:
-        schedules = [forward_pass(plain.tours[t], model) for t in sorted(plain.tours)]
+        schedules = [forward_pass(plain.tours[t], model_of(t)) for t in sorted(plain.tours)]
         return RunResult(tours, orders, plain.inserted,
                          geo_unplaced + plain.unplaced, schedules, geo_results,
                          skipped)
 
     # Optimize the given tours first (a poor plan also misleads WHERE new
     # orders go), insert, then optimize once more with the new stops.
-    better = {t: improve_tour(tour, model, **options) for t, tour in tours.items()}
-    result = insert_orders(better, orders, model, **options)
-    final = {t: improve_tour(tour, model, **options)
+    better = {t: improve_tour(tour, model_of(t), **options) for t, tour in tours.items()}
+    result = insert_orders(better, orders, model, models=models, **options)
+    final = {t: improve_tour(tour, model_of(t), **options)
              for t, tour in result.tours.items()}
 
     schedules, changes = [], []
     for t in sorted(final):
-        before = forward_pass(plain.tours[t], model)
-        after = forward_pass(final[t], model)
+        before = forward_pass(plain.tours[t], model_of(t))
+        after = forward_pass(final[t], model_of(t))
         schedules.append(after)
         changes.append(TourChange(t, before.duration, after.duration,
                                   moved_stops(plain.tours[t], final[t])))

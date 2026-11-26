@@ -27,6 +27,7 @@ from tour_insertion.model import InsertionOption, Stop, Tour
 from tour_insertion.traveltime import TravelModel
 
 REASON_NO_POSITION = "no_feasible_position"
+REASON_CAPACITY = "capacity"          # would fit in time, but no tour has room
 REASON_NO_TOURS = "no_tours"
 
 
@@ -47,12 +48,13 @@ class Unplaced:
     service_min: int | None = None
     items: int | None = None
     country: str = ""
+    kind: str = "drop"
 
     @classmethod
     def from_stop(cls, stop: Stop, reason: str) -> Unplaced:
         return cls(stop.stop_id, stop.address, reason, stop,
                    stop.tw_start, stop.tw_end, "", stop.service_min,
-                   stop.items, stop.country)
+                   stop.items, stop.country, stop.kind)
 
 
 @dataclass
@@ -65,10 +67,16 @@ class PlanResult:
 def insert_orders(tours: Mapping[str, Tour], orders: Sequence[Stop],
                   model: TravelModel, *, fixed_first: bool = True,
                   fixed_last: bool = True, tolerance_min: int = 0,
-                  start_times: Mapping[str, int] | None = None) -> PlanResult:
-    """Insert all `orders` into `tours`. Input objects are not changed."""
+                  start_times: Mapping[str, int] | None = None,
+                  models: Mapping[str, TravelModel] | None = None) -> PlanResult:
+    """Insert all `orders` into `tours`. Input objects are not changed.
+
+    models: travel model per tour_id (vehicles with different speeds);
+            tours not in it use `model`.
+    """
     _check_ids(tours, orders)
     start_times = start_times or {}
+    models = models or {}
     result = PlanResult(tours=dict(tours))
     pending = sorted(orders, key=lambda s: s.stop_id)
 
@@ -85,7 +93,8 @@ def insert_orders(tours: Mapping[str, Tour], orders: Sequence[Stop],
         key = (order.stop_id, tour_id)
         if key not in cache:
             cache[key] = best_insertion(
-                result.tours[tour_id], order, model, fixed_first=fixed_first,
+                result.tours[tour_id], order, models.get(tour_id, model),
+                fixed_first=fixed_first,
                 fixed_last=fixed_last, tolerance_min=tolerance_min,
                 start_time=start_times.get(tour_id))
         return cache[key]
@@ -106,7 +115,14 @@ def insert_orders(tours: Mapping[str, Tour], orders: Sequence[Stop],
                 best = option
 
         for order in nowhere:
-            result.unplaced.append(Unplaced.from_stop(order, REASON_NO_POSITION))
+            fits_without_capacity = any(
+                best_insertion(result.tours[t], order, models.get(t, model),
+                               fixed_first=fixed_first, fixed_last=fixed_last,
+                               tolerance_min=tolerance_min,
+                               start_time=start_times.get(t), check_capacity=False)
+                for t in result.tours if result.tours[t].capacity is not None)
+            reason = REASON_CAPACITY if fits_without_capacity else REASON_NO_POSITION
+            result.unplaced.append(Unplaced.from_stop(order, reason))
             pending.remove(order)
         if best is None:
             break

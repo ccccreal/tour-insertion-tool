@@ -152,3 +152,37 @@ def test_tours_ending_at_a_connection_point(tmp_path):
     page = (tmp_path / "map.html").read_text(encoding="utf-8")
     page = page.replace("\\u003e", ">").replace("\\u003c", "<")   # folium escapes < >
     assert ">S</div>" in page and ">E</div>" in page and ">D</div>" not in page
+
+
+def test_vehicles_capacity_and_pickups(tmp_path):
+    folder = EXAMPLES / "fahrzeuge"
+    assert main([str(folder / "tours.csv"), str(folder / "orders.csv"),
+                 "-o", str(tmp_path)]) == 0
+    rows = read_csv(tmp_path / "tours_new.csv")
+    tour_of = {r["stop_id"]: r["tour_id"] for r in rows}
+    # N3 lies on the bike tour T1, but the bike (10 items) is too full
+    assert tour_of["N3"] == "T2"
+    for tour_id, capacity in (("T1", 10), ("T2", 40)):
+        loads = [int(r["load"]) for r in rows if r["tour_id"] == tour_id]
+        assert max(loads) <= capacity
+    t1 = [r["stop_id"] for r in rows if r["tour_id"] == "T1"]
+    # the pickup N6 (6 items) only fits after some drops are done
+    assert t1.index("N6") > t1.index("T1-02")
+    assert {r["vehicle"] for r in rows if r["tour_id"] == "T1"} == {"Lastenvelo"}
+
+
+def test_vehicles_file_and_unknown_vehicle(tmp_path):
+    folder = EXAMPLES / "fahrzeuge"
+    small = tmp_path / "vehicles.json"
+    small.write_text('{"Lastenvelo": {"capacity": 5}, "Auto": {"capacity": 40}}')
+    assert main([str(folder / "tours.csv"), str(folder / "orders.csv"),
+                 "-o", str(tmp_path / "out"), "--vehicles", str(small)]) == 0
+    only_auto = tmp_path / "auto.json"
+    only_auto.write_text('{"Auto": {"capacity": 40}}')
+    try:
+        main([str(folder / "tours.csv"), str(folder / "orders.csv"),
+              "-o", str(tmp_path / "out2"), "--vehicles", str(only_auto)])
+    except SystemExit as error:
+        assert "Lastenvelo" in str(error)
+    else:
+        raise AssertionError("unknown vehicle must stop the run")

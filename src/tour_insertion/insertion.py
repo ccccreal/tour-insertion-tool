@@ -21,6 +21,12 @@ Which gaps are allowed
 fixed_first  True: nothing goes before the first stop (depot / start)
 fixed_last   True: nothing goes after the last stop (depot / end)
 
+Capacity
+--------
+If the tour has a capacity, the new tour must not be over it at any point
+(see load.py). Unlike late stops, there is no exemption for a tour that is
+already over capacity: nothing more is added to it.
+
 Choice among feasible positions
 -------------------------------
 1. smallest delta
@@ -31,6 +37,7 @@ Choice among feasible positions
 from __future__ import annotations
 
 from tour_insertion.feasibility import check, late_stops
+from tour_insertion.load import max_load
 from tour_insertion.model import InsertionOption, Stop, Tour
 from tour_insertion.schedule import forward_pass
 from tour_insertion.traveltime import TravelModel
@@ -64,14 +71,21 @@ def insertion_cost(tour: Tour, stop: Stop, position: int,
 
 def best_insertion(tour: Tour, stop: Stop, model: TravelModel, *,
                    fixed_first: bool = True, fixed_last: bool = True,
-                   tolerance_min: int = 0,
-                   start_time: int | None = None) -> InsertionOption | None:
-    """Best feasible insertion of `stop` into `tour`, or None if none fits."""
+                   tolerance_min: int = 0, start_time: int | None = None,
+                   check_capacity: bool = True) -> InsertionOption | None:
+    """Best feasible insertion of `stop` into `tour`, or None if none fits.
+
+    check_capacity=False ignores the capacity (used to tell WHY an order
+    fits nowhere: time windows or capacity).
+    """
     exempt = late_stops(forward_pass(tour, model, start_time), tolerance_min)
     best: InsertionOption | None = None
     best_key: tuple | None = None
     for pos in allowed_positions(len(tour), fixed_first, fixed_last):
         new_tour = tour.with_inserted(stop, pos)
+        if (check_capacity and tour.capacity is not None
+                and max_load(new_tour.stops) > tour.capacity):
+            continue
         verdict = check(forward_pass(new_tour, model, start_time),
                         tolerance_min, exempt)
         if not verdict.feasible:
