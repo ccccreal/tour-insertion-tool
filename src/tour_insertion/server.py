@@ -73,7 +73,7 @@ EXAMPLES = {
     "winterthur": ("winterthur/tours.csv", "winterthur/orders.csv"),
     "zuerich": ("zuerich/tours_zuerich.csv", "zuerich/orders_zuerich.csv"),
     "lyon": ("lyon/tours.csv", "lyon/orders.csv"),
-    "paris": ("paris/tours_paris_2.csv", "paris/orders_paris_2.csv"),
+    "paris": ("paris/tours_paris.csv", "paris/orders_paris.csv"),
 }
 #: Where the example tours start and end (set in the page with the example)
 EXAMPLE_DEPOTS = {
