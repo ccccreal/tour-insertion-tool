@@ -57,8 +57,6 @@ WEB = ROOT / "web"
 #: Example data sets offered in the web page: name -> (tours, orders)
 EXAMPLES = {
     "winterthur": ("winterthur/tours.csv", "winterthur/orders.csv"),
-    "anschluss": ("anschluss/tours.csv", "anschluss/orders.csv"),
-    "fahrzeuge": ("fahrzeuge/tours.csv", "fahrzeuge/orders.csv"),
     "zuerich": ("zuerich/tours_zuerich.csv", "zuerich/orders_zuerich.csv"),
     "lyon": ("lyon/tours.csv", "lyon/orders.csv"),
     "paris": ("paris/tours_paris_2.csv", "paris/orders_paris_2.csv"),

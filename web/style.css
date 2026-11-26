@@ -31,7 +31,7 @@ label { display: block; margin: 0 0 16px; font-size: 15px; }
 label > span { display: block; margin-bottom: 6px; }
 label.check { display: flex; gap: 10px; align-items: flex-start; }
 label.check > span { display: inline; margin: 0; }
-input[type=number], select {
+input[type=number], input[type=text], select {
   width: 100%; padding: 10px 12px; font: inherit; color: var(--ink);
   background: var(--field); border: 1px solid var(--line); border-radius: 8px; }
 input[type=checkbox], input[type=radio] { accent-color: var(--accent); width: 18px; height: 18px; margin-top: 3px; }
@@ -163,3 +163,9 @@ tr.is-new td:first-child .num { outline: 2px solid #fff; outline-offset: 1px; }
        background: rgba(255,255,255,.1); white-space: nowrap; }
 .tag.new { background: #f5f5f5; color: #111; }
 .tag.bad { background: var(--bad); color: #fff; }
+
+/* Sidebar sections */
+aside h3 { font-size: 15px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted);
+           margin: 22px 0 8px; padding-top: 14px; border-top: 1px solid var(--line); }
+table.vehicles tfoot td { font-size: 13px; font-style: italic; }
+aside p.small { margin: 6px 0 0; }

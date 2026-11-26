@@ -25,7 +25,7 @@ def test_app_runs_winterthur_example():
     at.button[0].click().run()
     assert not at.exception and not at.error
     values = {m.label: m.value for m in at.metric}
-    assert values["Touren"] == "2" and values["Eingefügt"] == "4"
+    assert values["Touren"] == "2" and values["Eingefügt"] == "6"
     assert values["Nicht einplanbar"] == "1"
 
 

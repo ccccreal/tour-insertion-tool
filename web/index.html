@@ -21,22 +21,30 @@
 
       <h2 data-i18n="settings"></h2>
       <label><span data-i18n="profile"></span><select id="profile"></select></label>
-      <label><span data-i18n="speed"></span><input id="speed" type="number" min="5" max="40" step="0.5"></label>
+
+      <h3 data-i18n="vehicles"></h3>
+      <table class="vehicles">
+        <thead><tr><th data-i18n="v_name"></th><th data-i18n="v_capacity"></th><th data-i18n="v_speed"></th><th></th></tr></thead>
+        <tbody id="vehicles"></tbody>
+        <tfoot><tr class="v-default">
+          <td data-i18n="v_default"></td><td class="muted">–</td>
+          <td><input id="speed" type="number" min="5" max="60" step="0.5"></td><td></td>
+        </tr></tfoot>
+      </table>
+      <button type="button" id="add-vehicle" class="small-button" data-i18n="v_add"></button>
+      <p class="small muted" data-i18n="vehicles_help"></p>
+
+      <h3 data-i18n="sec_travel"></h3>
       <label><span data-i18n="detour"></span><input id="detour" type="number" min="1" max="2.5" step="0.05"></label>
+
+      <h3 data-i18n="sec_stops"></h3>
       <label><span data-i18n="service"></span><input id="service" type="number" min="0" max="60" step="1"></label>
       <label><span data-i18n="tolerance"></span><input id="tolerance" type="number" min="0" max="120" step="1"></label>
+
+      <h3 data-i18n="sec_planning"></h3>
       <label class="check"><input id="optimize" type="checkbox">
         <span data-i18n="optimize"></span>
         <span class="help" id="optimize-help" tabindex="0">?</span></label>
-      <details class="box" id="vehicles-box">
-        <summary data-i18n="vehicles"></summary>
-        <p class="small muted" data-i18n="vehicles_help"></p>
-        <table class="vehicles">
-          <thead><tr><th data-i18n="v_name"></th><th data-i18n="v_capacity"></th><th data-i18n="v_speed"></th><th></th></tr></thead>
-          <tbody id="vehicles"></tbody>
-        </table>
-        <button type="button" id="add-vehicle" class="small-button" data-i18n="v_add"></button>
-      </details>
       <details class="box">
         <summary data-i18n="advanced"></summary>
         <label class="check"><input id="open-start" type="checkbox"> <span data-i18n="open_start"></span></label>

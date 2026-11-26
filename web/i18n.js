@@ -11,7 +11,7 @@ const TEXT = {
   data: { de: "Daten", fr: "Données", en: "Data" },
   source_upload: { de: "Eigene Dateien hochladen", fr: "Charger mes fichiers", en: "Upload my files" },
   source_example: { de: "Beispiel verwenden", fr: "Utiliser un exemple", en: "Use an example" },
-  ex_winterthur: { de: "Winterthur (klein, mit Koordinaten)", fr: "Winterthour (petit, avec coordonnées)", en: "Winterthur (small, with coordinates)" },
+  ex_winterthur: { de: "Winterthur (Velo und Auto, Abholungen, Anschluss)", fr: "Winterthour (vélo et voiture, enlèvements, correspondance)", en: "Winterthur (bike and car, pickups, connection)" },
   ex_zuerich: { de: "Zürich (10 Touren, 30 Aufträge)", fr: "Zurich (10 tournées, 30 commandes)", en: "Zurich (10 tours, 30 orders)" },
   ex_lyon: { de: "Lyon (2 Touren, 10 Aufträge)", fr: "Lyon (2 tournées, 10 commandes)", en: "Lyon (2 tours, 10 orders)" },
   ex_paris: { de: "Paris (10 Touren, 30 Aufträge)", fr: "Paris (10 tournées, 30 commandes)", en: "Paris (10 tours, 30 orders)" },
@@ -118,8 +118,6 @@ const TEXT = {
   until: { de: "spätestens", fr: "au plus tard", en: "at the latest" },
   role_S: { de: "Start", fr: "Départ", en: "Start" },
   role_E: { de: "Ende / Anschluss", fr: "Fin / correspondance", en: "End / connection" },
-  ex_fahrzeuge: { de: "Winterthur mit Velo und Auto, Abholungen", fr: "Winterthour, vélo et voiture, enlèvements", en: "Winterthur with bike and car, pickups" },
-  ex_anschluss: { de: "Winterthur mit Anschlussort (Ende ≠ Start)", fr: "Winterthour avec point de correspondance (fin ≠ départ)", en: "Winterthur with connection point (end ≠ start)" },
   place_on_map: { de: "Auf Karte setzen", fr: "Placer sur la carte", en: "Place on map" },
   place_hint: {
     de: "Mit «Auf Karte setzen» klickst du die richtige Stelle auf der Karte an. Der Stopp wird dann in seine Tour eingefügt, wo er am wenigsten Umweg kostet.",
@@ -134,10 +132,14 @@ const TEXT = {
   all_placed: { de: "Alle Aufträge und Tour-Stopps sind eingeplant.", fr: "Toutes les commandes et tous les arrêts sont planifiés.", en: "All orders and tour stops are planned." },
   vehicles: { de: "Fahrzeuge", fr: "Véhicules", en: "Vehicles" },
   vehicles_help: {
-    de: "Die Spalte «vehicle» in der Touren-Datei nennt das Fahrzeug einer Tour. Kapazität = höchstens so viele Items gleichzeitig an Bord. Leer = keine Grenze bzw. Tempo von oben.",
-    fr: "La colonne « vehicle » du fichier des tournées indique le véhicule. Capacité = nombre maximal de colis à bord. Vide = sans limite ou vitesse ci-dessus.",
-    en: "The column “vehicle” in the tours file names a tour's vehicle. Capacity = most items on board at once. Empty = no limit or the speed above."
+    de: "Die Spalte «vehicle» in der Touren-Datei nennt das Fahrzeug einer Tour. Items max. = so viele Items höchstens gleichzeitig an Bord, leer = keine Grenze. Touren ohne Fahrzeug fahren mit dem Tempo der letzten Zeile.",
+    fr: "La colonne « vehicle » du fichier des tournées indique le véhicule. Colis max. = nombre maximal de colis à bord, vide = sans limite. Les tournées sans véhicule roulent à la vitesse de la dernière ligne.",
+    en: "The column “vehicle” in the tours file names a tour's vehicle. Max items = most items on board at once, empty = no limit. Tours without a vehicle use the speed in the last row."
   },
+  v_default: { de: "ohne Fahrzeug", fr: "sans véhicule", en: "no vehicle" },
+  sec_travel: { de: "Fahrzeiten", fr: "Temps de trajet", en: "Travel times" },
+  sec_stops: { de: "Stopps", fr: "Arrêts", en: "Stops" },
+  sec_planning: { de: "Planung", fr: "Planification", en: "Planning" },
   v_name: { de: "Name", fr: "Nom", en: "Name" },
   v_capacity: { de: "Items max.", fr: "Colis max.", en: "Max items" },
   v_speed: { de: "km/h", fr: "km/h", en: "km/h" },

@@ -48,8 +48,8 @@ def test_plan_winterthur(client):
              (EXAMPLES / "winterthur/orders.csv").read_bytes(), {"optimize": True})
     assert r.status_code == 200, r.text
     body = r.json()
-    assert len(body["tours"]) == 2 and body["n_orders"] == 5
-    assert len(body["inserted"]) == 4 and body["unplaced"][0]["order_id"] == "N5"
+    assert len(body["tours"]) == 2 and body["n_orders"] == 7
+    assert len(body["inserted"]) == 6 and body["unplaced"][0]["order_id"] == "N7"
     assert body["unplaced"][0]["lat"] is not None          # can be dragged in
     assert body["changes"] and body["csv"]["tours"].startswith("tour_id")
     first = body["tours"][0]["stops"][0]
@@ -90,7 +90,7 @@ def test_schedule_after_manual_move(client):
     ids_t2 = [s["stop_id"] for s in out["tours"][1]["stops"]]
     assert ids_t2[-2] == stop["stop_id"] and ids_t2[-1].endswith("-99")
     assert out["tours"][1]["duration"] > tours[1]["duration"]       # longer now
-    assert "N5" in out["csv"]["unplaced"]
+    assert "N7" in out["csv"]["unplaced"]
 
 
 def test_schedule_marks_late_stops(client):
@@ -126,7 +126,7 @@ def test_insert_endpoint_places_a_stop(client):
     body = plan(client, (EXAMPLES / "winterthur/tours.csv").read_bytes(),
                 (EXAMPLES / "winterthur/orders.csv").read_bytes()).json()
     stop = {"stop_id": "X1", "lat": 47.5050, "lon": 8.7400, "service_min": 3,
-            "is_new": True, "items": 4}
+            "is_new": True, "items": 1}
     r = client.post("/api/insert", json={"settings": body["settings"], "tours": body["tours"],
                                          "stop": stop, "unplaced": []})
     out = r.json()

@@ -111,7 +111,7 @@ give the last stop its own address and, if it must be reached in time, a
 `tw_end`. New stops are always inserted before it. On the map the depot of
 a round trip is marked **D**; a tour that ends elsewhere has **S** (start)
 and **E** (end), and E turns red when the tour arrives too late.
-Example: `examples/anschluss/`.
+Example: tour T2 in `examples/winterthur/`.
 
 ## Vehicles and capacity
 
@@ -218,13 +218,11 @@ Detour factor and speed are assumptions, not measured for any city.
 All example data is **invented**. No real customer data is used or stored in
 this repository.
 
-- `examples/winterthur/`: 2 tours, 5 orders, with approximate coordinates
-  (runs offline). Order N5 cannot be reached in time on purpose.
-- `examples/fahrzeuge/`: a cargo bike (10 items) and a car (40 items),
-  with pickups. N3 lies on the bike's route, but the bike is too full, so
-  the car takes it.
-- `examples/anschluss/`: the same tours, but each ends at a railway station
-  (connection point). T2 must be there by 09:30, so N2 no longer fits.
+- `examples/winterthur/`: 2 tours, 7 orders, with approximate coordinates
+  (runs offline). Shows most features at once: T1 is a cargo bike (10
+  items), T2 a car (40 items) that ends at a railway station by 10:00.
+  N3 lies on the bike's route, but the bike is too full, so the car takes
+  it; N5 and N6 are pickups; N7 cannot be reached in time on purpose.
 - `examples/lyon/`: 2 tours, 7 orders, addresses only (needs internet).
   Public places and squares; C6 has no country (guessed from the postal code),
   C7 is a made-up address that must end up in `unplaced.csv`.

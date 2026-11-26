@@ -137,26 +137,23 @@ def test_optimize_flag_writes_moved_column(tmp_path):
         assert ids[0].endswith("-00") and ids[-1].endswith("-99")
 
 
-def test_tours_ending_at_a_connection_point(tmp_path):
-    folder = EXAMPLES / "anschluss"
-    assert main([str(folder / "tours.csv"), str(folder / "orders.csv"),
+def test_tour_ending_at_a_connection_point(tmp_path):
+    # T1 is a round trip, T2 ends at a railway station (by 10:00)
+    assert main([str(WINTERTHUR / "tours.csv"), str(WINTERTHUR / "orders.csv"),
                  "-o", str(tmp_path), "--map"]) == 0
     rows = read_csv(tmp_path / "tours_new.csv")
-    for tour_id, end in (("T1", "T1-99"), ("T2", "T2-99")):
-        ids = [r["stop_id"] for r in rows if r["tour_id"] == tour_id]
-        assert ids[0] == f"{tour_id}-00" and ids[-1] == end
-    # T2 must be at its connection point by 09:30: N2 (+21 min) does not fit
-    t2_end = [r for r in rows if r["stop_id"] == "T2-99"][0]
-    assert parse_time(t2_end["arrival"]) <= parse_time("09:30")
-    assert "N2" in {r["order_id"] for r in read_csv(tmp_path / "unplaced.csv")}
+    t2 = [r for r in rows if r["tour_id"] == "T2"]
+    assert t2[0]["stop_id"] == "T2-00" and t2[-1]["stop_id"] == "T2-99"
+    assert "Anschluss" in t2[-1]["address"]
+    assert parse_time(t2[-1]["arrival"]) <= parse_time("10:00")
     page = (tmp_path / "map.html").read_text(encoding="utf-8")
     page = page.replace("\\u003e", ">").replace("\\u003c", "<")   # folium escapes < >
-    assert ">S</div>" in page and ">E</div>" in page and ">D</div>" not in page
+    assert ">D</div>" in page                                         # T1: depot
+    assert ">S</div>" in page and ">E</div>" in page                  # T2: start, end
 
 
 def test_vehicles_capacity_and_pickups(tmp_path):
-    folder = EXAMPLES / "fahrzeuge"
-    assert main([str(folder / "tours.csv"), str(folder / "orders.csv"),
+    assert main([str(WINTERTHUR / "tours.csv"), str(WINTERTHUR / "orders.csv"),
                  "-o", str(tmp_path)]) == 0
     rows = read_csv(tmp_path / "tours_new.csv")
     tour_of = {r["stop_id"]: r["tour_id"] for r in rows}
@@ -169,18 +166,19 @@ def test_vehicles_capacity_and_pickups(tmp_path):
     # the pickup N6 (6 items) only fits after some drops are done
     assert t1.index("N6") > t1.index("T1-02")
     assert {r["vehicle"] for r in rows if r["tour_id"] == "T1"} == {"Lastenvelo"}
+    # N7 cannot be reached by 08:05
+    assert [r["order_id"] for r in read_csv(tmp_path / "unplaced.csv")] == ["N7"]
 
 
 def test_vehicles_file_and_unknown_vehicle(tmp_path):
-    folder = EXAMPLES / "fahrzeuge"
     small = tmp_path / "vehicles.json"
     small.write_text('{"Lastenvelo": {"capacity": 5}, "Auto": {"capacity": 40}}')
-    assert main([str(folder / "tours.csv"), str(folder / "orders.csv"),
+    assert main([str(WINTERTHUR / "tours.csv"), str(WINTERTHUR / "orders.csv"),
                  "-o", str(tmp_path / "out"), "--vehicles", str(small)]) == 0
     only_auto = tmp_path / "auto.json"
     only_auto.write_text('{"Auto": {"capacity": 40}}')
     try:
-        main([str(folder / "tours.csv"), str(folder / "orders.csv"),
+        main([str(WINTERTHUR / "tours.csv"), str(WINTERTHUR / "orders.csv"),
               "-o", str(tmp_path / "out2"), "--vehicles", str(only_auto)])
     except SystemExit as error:
         assert "Lastenvelo" in str(error)
