@@ -16,9 +16,11 @@ const state = {
   profiles: {}, examples: [], plan: null, settings: null,
   tours: [], unplaced: [], skipped: [], geocoding: [], changes: [], csv: {},
   deltas: {}, manual: new Set(), placed: new Set(), hidden: new Set(), history: [],
-  placing: null               // {kind: "unplaced"|"skipped", index} while waiting for a map click
+  placing: null,              // {kind: "unplaced"|"skipped", index} while waiting for a map click
+  selected: null              // tour_id shown below the map (null = overview)
 };
 let map = null, layer = null, highlight = null, legend = null;
+const markers = new Map();    // stop_id -> marker, to open a popup from the tables
 
 const $ = id => document.getElementById(id);
 
@@ -200,7 +202,8 @@ function setPlan(data) {
     plan: data, settings: data.settings, tours: data.tours, unplaced: data.unplaced,
     skipped: data.skipped, geocoding: data.geocoding, changes: data.changes, csv: data.csv,
     deltas: Object.fromEntries(data.inserted.map(o => [o.order_id, o.delta])),
-    manual: new Set(), placed: new Set(), hidden: new Set(), history: [], placing: null
+    manual: new Set(), placed: new Set(), hidden: new Set(), history: [], placing: null,
+    selected: null
   });
   $("results").hidden = false;
   $("metrics").hidden = false;
@@ -231,17 +234,18 @@ function fitMap() {
   if (points.length) map.fitBounds(points, { padding: [30, 30] });
 }
 
-// kind: "pickup" -> small ▲ (items go onto the vehicle), "drop" -> ▼.
-// Arrows are only drawn when the plan has pickups at all.
+// Pickups are drawn inverted: white with a ring and number in the tour
+// colour. Drops (the normal case) are filled. See the key in the legend.
 function stopIcon(text, fill, isNew, isDepot, late, kind) {
   const size = isNew ? 26 : 20;
+  const pickup = kind === "pickup" && !isDepot;
+  const ring = isNew ? "3px solid #000" : (pickup ? `3px solid ${fill}` : "1px solid #fff");
   const style = `width:${size}px;height:${size}px;border-radius:${isDepot ? "3px" : "50%"};` +
-    `background:${fill};border:${isNew ? "3px solid #000" : "1px solid #fff"}`;
-  const badge = kind && hasPickups()
-    ? `<span class="kind-badge ${kind}">${kind === "pickup" ? "▲" : "▼"}</span>` : "";
+    `background:${pickup ? "#fff" : fill};border:${ring};` + (pickup ? `color:${fill};` : "") +
+    (pickup && isNew ? `box-shadow:inset 0 0 0 2px ${fill};` : "");
   return L.divIcon({
     className: "", iconSize: [size, size], iconAnchor: [size / 2, size / 2],
-    html: `<div class="stop-icon${late ? " late" : ""}" style="${style}">${esc(text)}${badge}</div>`
+    html: `<div class="stop-icon${late ? " late" : ""}${pickup ? " pickup" : ""}" style="${style}">${esc(text)}</div>`
   });
 }
 
@@ -250,7 +254,7 @@ function hasPickups() {
          state.unplaced.some(u => u.kind === "pickup");
 }
 
-function kindText(kind) { return kind === "pickup" ? "▲ " + t("pickup") : "▼ " + t("drop"); }
+function kindText(kind) { return kind === "pickup" ? t("pickup") : t("drop"); }
 
 // "Lastenvelo 8/10" or "15 Items" when the tour has no capacity
 function loadText(tour) {
@@ -327,12 +331,16 @@ function spreadPositions(entries) {
 
 function renderMap() {
   layer.clearLayers();
+  markers.clear();
+  const dim = id => state.selected !== null && id !== state.selected;   // not the selected tour
   const entries = [];                     // draggable markers, positioned below
   const depots = new Map();               // spot -> {lat, lon, tours: [...], colours}
   state.tours.forEach((tour, ti) => {
     if (state.hidden.has(tour.tour_id)) return;
     const fill = colour(ti);
-    L.polyline(tour.stops.map(s => [s.lat, s.lon]), { color: fill, weight: 4, opacity: 0.8 })
+    L.polyline(tour.stops.map(s => [s.lat, s.lon]),
+               { color: fill, weight: dim(tour.tour_id) ? 3 : (state.selected ? 6 : 4),
+                 opacity: dim(tour.tour_id) ? 0.2 : 0.85 })
       .bindTooltip(tour.tour_id).addTo(layer);
     let number = 0;
     const last = tour.stops.length - 1;
@@ -385,8 +393,10 @@ function renderMap() {
       marker = L.marker(e.pos, {
         icon: stopIcon(String(e.number), e.fill, e.s.is_new, false, e.s.late, e.s.kind),
         draggable: true, title: `${e.tour.tour_id} #${e.number}: ${e.s.stop_id}`,
-        zIndexOffset: e.s.is_new ? 500 : 0
+        opacity: dim(e.tour.tour_id) ? 0.3 : 1,
+        zIndexOffset: (e.s.is_new ? 500 : 0) + (state.selected === e.tour.tour_id ? 1500 : 0)
       }).bindPopup(popupHtml(e.tour, e.number, e.s));
+      markers.set(e.s.stop_id, marker);
       attachDrag(marker, { kind: "tour", tourIndex: e.ti, stopIndex: e.k });
     } else {
       const u = e.u;
@@ -422,6 +432,9 @@ function renderLegend() {
           h("span", { class: tour.over_capacity ? "over" : null }, loadText(tour)),
           ` · ${hhmm(tour.end)}`)));
     });
+    if (hasPickups()) box.append(h("div", { class: "legend-key" },
+      h("span", { class: "key drop" }), " " + t("drop"), "   ",
+      h("span", { class: "key pickup" }), " " + t("pickup")));
     L.DomEvent.disableClickPropagation(box);
     L.DomEvent.disableScrollPropagation(box);
     return box;
@@ -685,49 +698,27 @@ function renderOpen() {
   $("open").replaceChildren(h("div", { class: "open-box" }, parts));
 }
 
+// Below the map: one tab per tour (plus an overview), instead of one long
+// list of all stops. The selected tour is highlighted on the map.
 function renderTables() {
   const parts = [];
+  if (state.selected && !state.tours.some(tr => tr.tour_id === state.selected)) state.selected = null;
 
-  if (state.changes.length) {
-    const before = state.changes.reduce((n, c) => n + c.before, 0);
-    const after = state.changes.reduce((n, c) => n + c.after, 0);
-    const moved = state.changes.reduce((n, c) => n + c.moved, 0);
-    parts.push(h("h2", {}, t("optimization")),
-      h("p", {}, t("opt_summary", { before, after, saved: before - after, moved })),
-      table([t("col_tour"), t("col_before"), t("col_after"), t("col_saved"), t("col_moved")],
-        state.changes.map(c => h("tr", {}, h("td", {}, c.tour_id), h("td", {}, c.before),
-          h("td", {}, c.after), h("td", {}, c.saved), h("td", {}, c.moved)))),
-      h("p", { class: "small muted" }, t("opt_note")));
-  }
+  const tabs = h("div", { class: "tabs", role: "tablist" });
+  const tab = (id, label, dot) => {
+    const b = h("button", { type: "button", role: "tab", class: "tab" + (state.selected === id ? " active" : ""),
+                            "aria-selected": String(state.selected === id) },
+      dot ? h("span", { class: "dot", style: `background:${dot}` }) : null, label);
+    b.addEventListener("click", () => selectTour(id));
+    return b;
+  };
+  tabs.append(tab(null, t("overview")));
+  state.tours.forEach((tr, ti) => tabs.append(
+    tab(tr.tour_id, tr.tour_id, colour(ti))));
+  parts.push(h("h2", {}, t("tours_title")), tabs);
 
-  const newRows = [];
-  state.tours.forEach(tr => tr.stops.forEach((s, k) => {
-    if (!s.is_new) return;
-    newRows.push(h("tr", {}, h("td", {}, s.stop_id), h("td", {}, tr.tour_id), h("td", {}, k),
-      h("td", {}, s.items ?? ""),
-      h("td", {}, state.manual.has(s.stop_id) ? t("manual") : (state.deltas[s.stop_id] ?? "")),
-      h("td", { class: s.late ? "late" : null }, hhmm(s.arrival))));
-  }));
-  parts.push(h("h2", {}, t("inserted")),
-    table([t("col_order"), t("col_tour"), t("col_pos"), t("col_items"), t("col_extra"), t("col_arrival")], newRows));
-
-  const all = [];
-  state.tours.forEach(tr => tr.stops.forEach((s, k) => {
-    const marks = [s.is_new ? t("new") : "", state.placed.has(s.stop_id) ? t("placed_short") : "",
-                   state.manual.has(s.stop_id) ? t("manual")
-                   : (s.moved && !s.is_new ? t("moved") : "")].filter(Boolean).join(", ");
-    const window_ = (s.tw_start !== null || s.tw_end !== null)
-      ? `${hhmm(s.tw_start) || "…"}–${hhmm(s.tw_end) || "…"}` : "";
-    all.push(h("tr", {}, h("td", {}, tr.tour_id), h("td", {}, k), h("td", {}, s.stop_id),
-      h("td", {}, marks), h("td", {}, s.address), h("td", {}, kindText(s.kind)), h("td", {}, s.items ?? ""),
-      h("td", { class: tr.capacity !== null && s.load > tr.capacity ? "late" : null }, s.load),
-      h("td", { class: s.late ? "late" : null }, hhmm(s.arrival)),
-      h("td", {}, window_), h("td", {}, s.slack ?? "")));
-  }));
-  parts.push(h("details", {}, h("summary", {}, t("all_tours")),
-    table([t("col_tour"), "#", t("col_stop"), "", t("col_address"), t("col_type"), t("col_items"),
-           t("on_board"), t("col_arrival"),
-           t("col_window"), t("col_slack")], all)));
+  const ti = state.tours.findIndex(tr => tr.tour_id === state.selected);
+  parts.push(ti < 0 ? overviewPanel() : tourPanel(state.tours[ti], ti));
 
   if (state.geocoding.length) {
     parts.push(h("details", {}, h("summary", {}, t("geocoding")),
@@ -737,6 +728,132 @@ function renderTables() {
           h("td", {}, g.score === null ? "" : g.score.toFixed(2)), h("td", {}, g.label))))));
   }
   $("tables").replaceChildren(...parts);
+}
+
+function selectTour(id) {
+  state.selected = id;
+  renderMap();
+  renderTables();
+  if (id) {
+    const tour = state.tours.find(tr => tr.tour_id === id);
+    if (tour && !state.hidden.has(id))
+      map.fitBounds(L.latLngBounds(tour.stops.map(s => [s.lat, s.lon])), { padding: [40, 40], maxZoom: 15 });
+  }
+}
+
+function changeOf(tourId) { return state.changes.find(c => c.tour_id === tourId); }
+
+function tourFacts(tr) {
+  const last = tr.stops[tr.stops.length - 1];
+  const roundTrip = metres(tr.stops[0], last) < SAME_LOCATION_M;
+  return {
+    stops: tr.stops.length - 2,
+    added: tr.stops.filter(s => s.is_new).length,
+    late: tr.stops.filter(s => s.late).length,
+    roundTrip, last
+  };
+}
+
+function overviewPanel() {
+  const rows = state.tours.map((tr, ti) => {
+    const f = tourFacts(tr), c = changeOf(tr.tour_id);
+    const row = h("tr", { class: "clickable" },
+      h("td", {}, h("span", { class: "dot", style: `background:${colour(ti)}` }), " ", tr.tour_id),
+      h("td", {}, tr.vehicle || "–"),
+      h("td", { class: tr.over_capacity ? "late" : null },
+        tr.capacity !== null && tr.capacity !== undefined ? `${tr.max_load}/${tr.capacity}`
+                                                         : `${tr.items || 0} ${t("items_short")}`),
+      h("td", {}, hhmm(tr.start)), h("td", {}, hhmm(tr.end)), h("td", {}, `${tr.duration} min`),
+      h("td", {}, f.stops), h("td", {}, f.added || ""),
+      h("td", { class: f.late ? "late" : null }, f.late || ""),
+      h("td", {}, f.roundTrip ? t("end_depot") : t("end_connection")),
+      h("td", {}, c && c.saved ? `−${c.saved} min` : ""));
+    row.addEventListener("click", () => selectTour(tr.tour_id));
+    return row;
+  });
+  return h("div", { class: "panel" },
+    table([t("col_tour"), t("v_vehicle"), t("col_load"), t("col_start"), t("col_end"), t("col_duration"),
+           t("col_stops"), t("col_new"), t("late"), t("col_tour_end"), t("col_saved")], rows),
+    h("p", { class: "small muted" }, t("overview_hint")));
+}
+
+function tourPanel(tr, ti) {
+  const f = tourFacts(tr), c = changeOf(tr.tour_id);
+  const card = (label, value, extra, bad) => h("div", { class: "card" + (bad ? " bad" : "") },
+    h("div", { class: "label" }, label), h("div", { class: "value" }, value),
+    extra ? h("div", { class: "extra" }, extra) : null);
+  const cards = [
+    card(t("v_vehicle"), tr.vehicle || "–",
+         tr.capacity !== null && tr.capacity !== undefined ? `${t("v_capacity")}: ${tr.capacity}` : t("no_limit")),
+    card(t("col_load"), tr.capacity !== null && tr.capacity !== undefined ? `${tr.max_load}/${tr.capacity}` : `${tr.items || 0}`,
+         tr.capacity ? loadBar(tr.max_load, tr.capacity) : t("items_short"), tr.over_capacity),
+    card(t("col_time"), `${hhmm(tr.start)}–${hhmm(tr.end)}`, `${tr.duration} min`),
+    card(t("col_stops"), f.stops, f.added ? t("n_new", { n: f.added }) : ""),
+    card(t("col_tour_end"), f.roundTrip ? t("end_depot") : t("end_connection"),
+         f.roundTrip ? "" : `${hhmm(f.last.arrival)}` +
+           (f.last.tw_end !== null && f.last.tw_end !== undefined ? ` (${t("until")} ${hhmm(f.last.tw_end)})` : ""),
+         f.last.late),
+  ];
+  if (f.late) cards.push(card(t("late"), f.late, t("stops_late"), true));
+  if (c) cards.push(card(t("optimization"), `${c.before} → ${c.after} min`, t("n_moved", { n: c.moved })));
+
+  let number = 0;
+  const rows = tr.stops.map((s, k) => {
+    const depot = (k === 0 || k === tr.stops.length - 1) && !s.is_new;
+    const label = depot ? (f.roundTrip ? "D" : (k === 0 ? "S" : "E")) : String(++number);
+    const marks = [];
+    if (s.is_new) marks.push(h("span", { class: "tag new" },
+      t("new") + (state.deltas[s.stop_id] !== undefined && !state.manual.has(s.stop_id)
+        ? ` +${Math.round(state.deltas[s.stop_id])} min` : "")));
+    if (state.placed.has(s.stop_id)) marks.push(h("span", { class: "tag" }, t("placed_short")));
+    if (state.manual.has(s.stop_id)) marks.push(h("span", { class: "tag" }, t("manual")));
+    else if (s.moved && !s.is_new && !depot) marks.push(h("span", { class: "tag" }, t("moved")));
+    if (s.late) marks.push(h("span", { class: "tag bad" }, t("late")));
+    const window_ = (s.tw_start !== null || s.tw_end !== null)
+      ? `${hhmm(s.tw_start) || "…"}–${hhmm(s.tw_end) || "…"}` : "";
+    const over = tr.capacity !== null && tr.capacity !== undefined && s.load > tr.capacity;
+    const row = h("tr", { class: "clickable" + (s.is_new ? " is-new" : "") },
+      h("td", {}, h("span", { class: "num" + (depot ? " depot" : "") + (s.kind === "pickup" && !depot ? " pickup" : ""),
+                              style: `--c:${colour(ti)}` }, label)),
+      h("td", {}, h("div", {}, s.stop_id), h("div", { class: "small muted" }, s.address)),
+      h("td", {}, depot ? "" : kindText(s.kind)),
+      h("td", {}, s.items ?? ""),
+      h("td", { class: over ? "late" : null },
+        tr.capacity !== null && tr.capacity !== undefined ? h("span", {}, loadBar(s.load, tr.capacity), ` ${s.load}`) : s.load),
+      h("td", { class: s.late ? "late" : null }, hhmm(s.arrival)),
+      h("td", {}, hhmm(s.departure)),
+      h("td", {}, window_), h("td", {}, s.slack ?? ""),
+      h("td", {}, marks));
+    row.addEventListener("click", () => focusStop(s));
+    return row;
+  });
+  const csvButton = h("button", { type: "button", class: "small-button" }, `⬇ ${tr.tour_id}.csv`);
+  csvButton.addEventListener("click", () => download(`tour_${tr.tour_id}.csv`, tourCsv(tr.tour_id)));
+  return h("div", { class: "panel" },
+    h("div", { class: "cards" }, cards),
+    table(["#", t("col_stop"), t("col_type"), t("col_items"), t("on_board"), t("col_arrival"),
+           t("col_departure"), t("col_window"), t("col_slack"), ""], rows),
+    csvButton);
+}
+
+function loadBar(load, capacity) {
+  const share = capacity > 0 ? Math.min(1, load / capacity) : 1;
+  return h("span", { class: "bar" + (load > capacity ? " over" : "") },
+    h("span", { style: `width:${Math.round(share * 100)}%` }));
+}
+
+function focusStop(s) {
+  map.setView([s.lat, s.lon], Math.max(map.getZoom(), 15));
+  const marker = markers.get(s.stop_id);
+  if (marker) setTimeout(() => (markers.get(s.stop_id) || marker).openPopup(), 300);
+  $("map").scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+// Lines of tours_new.csv that belong to one tour (first column = tour_id).
+function tourCsv(tourId) {
+  const lines = (state.csv.tours || "").split("\n");
+  const firstField = line => line.startsWith('"') ? line.slice(1, line.indexOf('"', 1)) : line.split(",")[0];
+  return [lines[0], ...lines.slice(1).filter(l => l && firstField(l) === tourId)].join("\n") + "\n";
 }
 
 function download(name, text) {

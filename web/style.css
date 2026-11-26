@@ -126,10 +126,40 @@ table.vehicles td { padding: 2px 4px; border: 0; }
 table.vehicles input { width: 100%; box-sizing: border-box; padding: 4px 6px; font-size: 13px; }
 table.vehicles .v-name { min-width: 80px; }
 
-/* Pickup / drop arrow on a stop marker */
+/* Pickup stops: inverted marker (see stopIcon) */
 .stop-icon { position: relative; }
-.kind-badge { position: absolute; top: -9px; right: -9px; width: 13px; height: 13px; line-height: 13px;
-              border-radius: 50%; background: #fff; color: #222; font-size: 9px; text-align: center;
-              box-shadow: 0 0 2px rgba(0,0,0,.6); }
-.kind-badge.pickup { background: #ffe066; }
 .legend .over { color: #d7263d; font-weight: 700; }
+.legend-key { margin-top: 6px; padding-top: 6px; border-top: 1px solid #ddd; font-size: 13px; color: #333; }
+.legend-key .key { display: inline-block; width: 12px; height: 12px; border-radius: 50%; vertical-align: -1px;
+                   box-sizing: border-box; }
+.legend-key .key.drop { background: #555; }
+.legend-key .key.pickup { background: #fff; border: 3px solid #555; margin-left: 8px; }
+
+/* Tabs below the map: overview and one tab per tour */
+.tabs { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 14px; }
+.tab { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border-radius: 6px;
+       border: 1px solid var(--line); background: transparent; color: inherit; cursor: pointer; font-size: 14px; }
+.tab.active { background: var(--panel); border-color: #888; font-weight: 700; }
+.tab .dot, td .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+.panel { margin-bottom: 18px; }
+tr.clickable { cursor: pointer; }
+tr.clickable:hover { background: rgba(255,255,255,.04); }
+tr.is-new td:first-child .num { outline: 2px solid #fff; outline-offset: 1px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 12px; margin-bottom: 14px; }
+.card { background: var(--panel); border-radius: 8px; padding: 10px 14px; }
+.card .label { font-size: 13px; color: var(--muted); margin: 0; }
+.card .value { font-size: 22px; font-weight: 700; margin: 2px 0; }
+.card .extra { font-size: 13px; color: var(--muted); }
+.card.bad .value { color: var(--bad); }
+.num { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px;
+       border-radius: 50%; background: var(--c); color: #fff; font: bold 11px sans-serif; border: 2px solid var(--c); }
+.num.depot { border-radius: 4px; }
+.num.pickup { background: #fff; color: var(--c); }
+.bar { display: inline-block; width: 60px; height: 8px; border-radius: 4px; background: rgba(255,255,255,.12);
+       vertical-align: middle; overflow: hidden; }
+.bar > span { display: block; height: 100%; background: #3ecf8e; }
+.bar.over > span { background: var(--bad); }
+.tag { display: inline-block; font-size: 12px; padding: 1px 7px; border-radius: 10px; margin: 1px 3px 1px 0;
+       background: rgba(255,255,255,.1); white-space: nowrap; }
+.tag.new { background: #f5f5f5; color: #111; }
+.tag.bad { background: var(--bad); color: #fff; }

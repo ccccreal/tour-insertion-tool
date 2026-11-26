@@ -52,6 +52,10 @@ uv run tour-insert-server        # opens on http://localhost:8000
 - Drag & drop: drop a stop (or an order marked ✕ that fits nowhere) on a
   tour line; it goes between the two stops of that line, both tours are
   recomputed, stops after their time window turn red, *Undo* goes back.
+- Below the map: orders not placed and skipped stops first (so none is
+  forgotten), then the tours: an overview with one row per tour and one
+  tab per tour with all its stops, times, load and notes. The selected
+  tour is highlighted on the map; clicking a stop opens it on the map.
 - Stops at the same spot are spread on a small circle around it (a thin
   line points to the real position), so each one can be seen and dragged.
 - Address not found: *Place on map*, then click the right spot. A new
@@ -132,8 +136,8 @@ where enough has already been delivered. An order that would fit in time
 but finds no room gets the reason `capacity`. Moving a stop by hand may
 overload a tour: the page then shows the tour in red and a warning.
 
-On the map, when the plan has pickups, each stop shows ▲ (pickup) or ▼
-(drop). `tours_new.csv` has the columns `vehicle`, `type` and `load`
+On the map, pickups are drawn inverted (white with a coloured ring),
+drops filled. `tours_new.csv` has the columns `vehicle`, `type` and `load`
 (items on board after the stop).
 
 ## Geocoding
