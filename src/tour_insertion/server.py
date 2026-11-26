@@ -47,6 +47,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from tour_insertion.csv_io import (format_time, geocoding_to_csv, parse_kind, read_rows_text,
                                    unplaced_from_row,
@@ -361,7 +362,7 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
     @app.post("/api/inspect")
     async def inspect_file(file: UploadFile = File(...)):
         try:
-            return inspect(await read_bytes(file), file.filename or "upload")
+            return await run_in_threadpool(inspect, await read_bytes(file), file.filename or "upload")
         except ValueError as error:
             raise InputError(str(error)) from error
 
@@ -401,10 +402,14 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
             if name.lower().endswith((".xlsx", ".xlsm", ".xls")):
                 raise InputError(f"{name}: for an Excel file, set up the columns first")
             rows, no_address = read_rows_text(await read_upload(orders), name), []
+        # Planning (and geocoding many addresses) can take a while: run it in
+        # a worker thread, so the server keeps answering other requests
+        # (the page itself, other users) in the meantime.
         if tours is None or not tours.filename:
-            return result_json(plan_new(rows, s, get_geocoder(s), no_address), s, "new")
+            result = await run_in_threadpool(plan_new, rows, s, get_geocoder(s), no_address)
+            return result_json(result, s, "new")
         tour_rows = read_rows_text(await read_upload(tours), tours.filename or "tours")
-        result = run(tour_rows, rows, s, get_geocoder(s))
+        result = await run_in_threadpool(run, tour_rows, rows, s, get_geocoder(s))
         result.unplaced = [unplaced_from_row(r, "order_id", REASON_NO_ADDRESS, s.service_min)
                            for r in no_address] + result.unplaced
         return result_json(result, s)
