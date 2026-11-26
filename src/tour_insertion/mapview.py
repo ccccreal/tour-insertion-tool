@@ -92,14 +92,17 @@ def build_map(schedules: list[Schedule], unplaced: list[Unplaced] = (),
                  f"{html.escape(tour_id)} ({len(schedule.times)} stops)")
         folium.PolyLine([t.stop.point for t in schedule.times], color=colour,
                         weight=4, opacity=0.8, tooltip=tour_id).add_to(layer)
-        last = len(schedule.times)
-        labels = end_labels(schedule.times[0].stop.point, schedule.times[-1].stop.point)
+        roles = {t.stop.role: t.stop.point for t in schedule.times if t.stop.role}
+        if "start" in roles and "end" in roles:
+            labels = dict(zip(("start", "end"), end_labels(roles["start"], roles["end"])))
+        else:
+            labels = {"start": "S", "end": "E"}
         number = 0
         for seq, t in enumerate(schedule.times, start=1):
-            is_depot = seq in (1, last) and not t.stop.is_new
+            is_depot = bool(t.stop.role)
             if not is_depot:
                 number += 1
-            label = labels[0 if seq == 1 else 1] if is_depot else str(number)
+            label = labels[t.stop.role] if is_depot else str(number)
             folium.Marker(
                 t.stop.point,
                 icon=_icon(label, colour,

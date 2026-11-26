@@ -19,7 +19,7 @@ from tour_insertion.planner import Unplaced
 
 LABELS = {
     "de": {
-        "tour": "Tour", "vehicle": "Fahrzeug", "start": "Start", "end": "Zurück",
+        "tour": "Tour", "vehicle": "Fahrzeug", "start": "Start", "end": "Ende",
         "duration": "Dauer", "stops": "Stopps", "items": "Items", "capacity": "Kapazität",
         "nr": "Nr.", "arrival": "Ankunft", "departure": "Abfahrt", "stop": "Stopp",
         "name": "Name", "address": "Adresse", "notes": "Hinweise", "type": "Typ",
@@ -31,7 +31,7 @@ LABELS = {
         "page": "Seite {n}", "until": "bis", "from": "ab", "end_at": "Ende",
     },
     "fr": {
-        "tour": "Tournée", "vehicle": "Véhicule", "start": "Départ", "end": "Retour",
+        "tour": "Tournée", "vehicle": "Véhicule", "start": "Départ", "end": "Fin",
         "duration": "Durée", "stops": "Arrêts", "items": "Colis", "capacity": "Capacité",
         "nr": "N°", "arrival": "Arrivée", "departure": "Départ", "stop": "Arrêt",
         "name": "Nom", "address": "Adresse", "notes": "Remarques", "type": "Type",
@@ -43,7 +43,7 @@ LABELS = {
         "page": "Page {n}", "until": "jusqu'à", "from": "dès", "end_at": "Fin",
     },
     "en": {
-        "tour": "Tour", "vehicle": "Vehicle", "start": "Start", "end": "Back",
+        "tour": "Tour", "vehicle": "Vehicle", "start": "Start", "end": "End",
         "duration": "Duration", "stops": "Stops", "items": "Items", "capacity": "Capacity",
         "nr": "No.", "arrival": "Arrival", "departure": "Departure", "stop": "Stop",
         "name": "Name", "address": "Address", "notes": "Notes", "type": "Type",
@@ -85,8 +85,16 @@ def _window(t: ScheduledStop, L: dict) -> str:
 
 
 def _inner(schedule: Schedule) -> list[ScheduledStop]:
-    """The stops between start and end (the depot rows are shown apart)."""
-    return list(schedule.times[1:-1])
+    """The customer stops (start and end are shown apart)."""
+    return [t for t in schedule.times if not t.stop.role]
+
+
+def _start(schedule: Schedule) -> ScheduledStop | None:
+    return schedule.times[0] if schedule.times and schedule.times[0].stop.role == "start" else None
+
+
+def _end(schedule: Schedule) -> ScheduledStop | None:
+    return schedule.times[-1] if schedule.times and schedule.times[-1].stop.role == "end" else None
 
 
 def _notes(stop, skip_in_name: bool = True) -> list[tuple[str, str]]:
@@ -145,8 +153,9 @@ def tours_xlsx(schedules: Sequence[Schedule], unplaced: Sequence[Unplaced] = (),
         load = max_load(stops)
         facts = [
             (L["vehicle"], tour.vehicle or "–"),
-            (L["start"], format_time(schedule.times[0].departure)),
-            (L["end"], format_time(schedule.times[-1].arrival)),
+            (L["start"], format_time(schedule.times[0].arrival) if schedule.times else ""),
+            (L["end"], format_time(schedule.times[-1].arrival if _end(schedule)
+                                   else schedule.end) if schedule.times else ""),
             (L["duration"], f"{schedule.duration} {L['min']}"),
             (L["stops"], len(_inner(schedule))),
             (L["items"], f"{load}" + (f" / {tour.capacity}" if tour.capacity is not None else "")),
@@ -154,7 +163,10 @@ def tours_xlsx(schedules: Sequence[Schedule], unplaced: Sequence[Unplaced] = (),
         totals = _totals(stops)
         if totals:
             facts.append((L["products"], _qty_text(totals)))
-        facts.append((L["depot"], schedule.times[0].stop.address))
+        if _start(schedule):
+            facts.append((L["start"], _start(schedule).stop.address))
+        if _end(schedule):
+            facts.append((L["end_at"], _end(schedule).stop.address))
         for k, v in facts:
             ws.append([k, v])
             ws.cell(ws.max_row, 1).font = bold
@@ -167,8 +179,9 @@ def tours_xlsx(schedules: Sequence[Schedule], unplaced: Sequence[Unplaced] = (),
         for c in range(1, len(header) + 1):
             cell = ws.cell(hrow, c)
             cell.font, cell.fill, cell.alignment = bold, head_fill, wrap
-        loads = load_after(stops)
-        for number, (t, after) in enumerate(zip(schedule.times[1:-1], loads[1:-1]), start=1):
+        loads = dict(zip((id(t) for t in schedule.times), load_after(stops)))
+        for number, t in enumerate(_inner(schedule), start=1):
+            after = loads[id(t)]
             s = t.stop
             q, info = dict(s.quantities), dict(s.info)
             ws.append([number, format_time(t.arrival), format_time(t.departure), s.stop_id,
@@ -179,8 +192,9 @@ def tours_xlsx(schedules: Sequence[Schedule], unplaced: Sequence[Unplaced] = (),
             for c in range(1, len(header) + 1):
                 ws.cell(ws.max_row, c).alignment = wrap
                 ws.cell(ws.max_row, c).border = thin
-        end = schedule.times[-1]
-        ws.append(["", format_time(end.arrival), "", "", L["end_at"], end.stop.address])
+        end = _end(schedule)
+        if end:
+            ws.append(["", format_time(end.arrival), "", "", L["end_at"], end.stop.address])
 
         widths = {L["nr"]: 5, L["arrival"]: 8, L["departure"]: 8, L["id"]: 9, L["name"]: 26,
                   L["address"]: 32, L["type"]: 11, L["items"]: 7, L["load"]: 9,
@@ -259,8 +273,9 @@ def tours_pdf(schedules: Sequence[Schedule], lang: str = "de") -> bytes:
         story.append(Paragraph(esc(f"{L['tour']} {tour.tour_id}"), title))
         facts = [
             (L["vehicle"], tour.vehicle or "–"),
-            (L["start"], format_time(schedule.times[0].departure)),
-            (L["end"], format_time(schedule.times[-1].arrival)),
+            (L["start"], format_time(schedule.times[0].arrival) if schedule.times else ""),
+            (L["end"], format_time(schedule.times[-1].arrival if _end(schedule)
+                                   else schedule.end) if schedule.times else ""),
             (L["stops"], str(len(inner))),
             (L["items"], f"{load}" + (f" / {tour.capacity}" if tour.capacity is not None else "")),
         ]
@@ -275,8 +290,12 @@ def tours_pdf(schedules: Sequence[Schedule], lang: str = "de") -> bytes:
         if totals:
             story += [Spacer(1, 2 * mm),
                       Paragraph(f"<b>{esc(L['products'])}:</b> {esc(_qty_text(totals))}", base)]
-        story += [Spacer(1, 2 * mm),
-                  Paragraph(f"<b>{esc(L['depot'])}:</b> {esc(schedule.times[0].stop.address)}", base),
+        places = []
+        if _start(schedule):
+            places.append(f"<b>{esc(L['start'])}:</b> {esc(_start(schedule).stop.address)}")
+        if _end(schedule):
+            places.append(f"<b>{esc(L['end_at'])}:</b> {esc(_end(schedule).stop.address)}")
+        story += [Spacer(1, 2 * mm), Paragraph(" &nbsp;·&nbsp; ".join(places), base),
                   Spacer(1, 4 * mm)]
 
         rows = [[Paragraph(esc(L["nr"]), head), Paragraph(esc(L["arrival"]), head),
@@ -308,10 +327,11 @@ def tours_pdf(schedules: Sequence[Schedule], lang: str = "de") -> bytes:
                          Paragraph("<br/>".join(items), base),
                          Paragraph("<br/>".join(notes), small),
                          ""])
-        end = schedule.times[-1]
-        rows.append([Paragraph("", base), Paragraph(f"<b>{format_time(end.arrival)}</b>", base),
-                     Paragraph(f"<b>{esc(L['end_at'])}:</b> {esc(end.stop.address)}", base),
-                     "", "", ""])
+        end = _end(schedule)
+        if end:
+            rows.append([Paragraph("", base), Paragraph(f"<b>{format_time(end.arrival)}</b>", base),
+                         Paragraph(f"<b>{esc(L['end_at'])}:</b> {esc(end.stop.address)}", base),
+                         "", "", ""])
         cols = [9 * mm, 15 * mm, 62 * mm, 26 * mm, None, 14 * mm]
         cols[4] = width - sum(c for c in cols if c)
         table = Table(rows, colWidths=cols, repeatRows=1)
@@ -320,7 +340,7 @@ def tours_pdf(schedules: Sequence[Schedule], lang: str = "de") -> bytes:
                  ("LINEBELOW", (0, 1), (-1, -2), 0.3, colors.HexColor("#BBBBBB")),
                  ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
                  ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3)]
-        for r in range(1, len(rows) - 1):          # empty tick box per stop
+        for r in range(1, len(inner) + 1):         # empty tick box per stop
             style.append(("BOX", (5, r), (5, r), 0.6, colors.HexColor("#888888")))
             if r % 2 == 0:
                 style.append(("BACKGROUND", (0, r), (4, r), colors.HexColor("#F7F7F7")))

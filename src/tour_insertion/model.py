@@ -35,6 +35,9 @@ class Stop:
                their sum is `items`. Only for the summary and the export.
     info       other columns of the input (contact, opening hours, ...),
                not used for planning, passed on to the export
+    role       "" for a customer stop; "start" / "end" for the place where
+               the tour starts or ends (depot or connection point), added
+               by the tool from the settings, never part of the input files
     """
 
     stop_id: str
@@ -51,6 +54,7 @@ class Stop:
     name: str = ""
     quantities: tuple[tuple[str, int], ...] = ()
     info: tuple[tuple[str, str], ...] = ()
+    role: str = ""
 
     @property
     def point(self) -> Point:
@@ -66,12 +70,15 @@ class Tour:
 
     vehicle    name of the vehicle type ("" = not given)
     capacity   most items the vehicle can carry at once (None = no limit)
+    start      start time (minutes) when the tour has no start stop, i.e.
+               it starts at its first customer; None = from the first stop
     """
 
     tour_id: str
     stops: tuple[Stop, ...] = ()
     vehicle: str = ""
     capacity: int | None = None
+    start: int | None = None
 
     def __len__(self) -> int:
         return len(self.stops)

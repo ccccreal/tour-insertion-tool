@@ -1,4 +1,0 @@
-# Streamlit Community Cloud uses this file (it sits next to the entry point
-# and so wins over uv.lock in the repository root). Locally: uv sync --extra app
-folium>=0.17
-streamlit>=1.45

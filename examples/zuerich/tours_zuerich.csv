@@ -1,5 +1,4 @@
 tour_id,seq,stop_id,address,country,lat,lon,tw_start,tw_end,service_min,items
-T01,0,T01-00,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,08:00,,0,
 T01,1,T01-01,"Löwenstrasse 20, 8001 Zürich",CH,,,,,,1
 T01,2,T01-02,"Bahnhofstrasse 70, 8001 Zürich",CH,,,,,,1
 T01,3,T01-03,"Rennweg 30, 8001 Zürich",CH,,,,,,2
@@ -15,8 +14,6 @@ T01,12,T01-12,"Niederdorfstrasse 40, 8001 Zürich",CH,,,,,,1
 T01,13,T01-13,"Mühlegasse 20, 8001 Zürich",CH,,,,,,2
 T01,14,T01-14,"Limmatquai 120, 8001 Zürich",CH,,,,,,1
 T01,15,T01-15,"Bahnhofquai 15, 8001 Zürich",CH,,,,,,2
-T01,99,T01-99,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,,,0,
-T02,0,T02-00,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,08:00,,0,
 T02,1,T02-01,"Bleicherweg 20, 8002 Zürich",CH,,,,,,6
 T02,2,T02-02,"Stockerstrasse 20, 8002 Zürich",CH,,,,,,3
 T02,3,T02-03,"Tödistrasse 30, 8002 Zürich",CH,,,,,,6
@@ -32,8 +29,6 @@ T02,12,T02-12,"Morgentalstrasse 20, 8038 Zürich",CH,,,,,,4
 T02,13,T02-13,"Bederstrasse 50, 8002 Zürich",CH,,,,,,1
 T02,14,T02-14,"Brandschenkestrasse 50, 8002 Zürich",CH,,,,,,1
 T02,15,T02-15,"General-Wille-Strasse 10, 8002 Zürich",CH,,,,,,3
-T02,99,T02-99,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,,,0,
-T03,0,T03-00,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,08:00,,0,
 T03,1,T03-01,"Kalkbreitestrasse 10, 8003 Zürich",CH,,,,,,3
 T03,2,T03-02,"Zurlindenstrasse 100, 8003 Zürich",CH,,,,,,3
 T03,3,T03-03,"Idastrasse 20, 8003 Zürich",CH,,,,,,6
@@ -49,8 +44,6 @@ T03,12,T03-12,"Manessestrasse 50, 8003 Zürich",CH,,,,,,6
 T03,13,T03-13,"Steinstrasse 20, 8003 Zürich",CH,,,,,,2
 T03,14,T03-14,"Zweierstrasse 100, 8003 Zürich",CH,,,,,,4
 T03,15,T03-15,"Schöntalstrasse 10, 8004 Zürich",CH,,,,,,3
-T03,99,T03-99,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,,,0,
-T04,0,T04-00,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,08:00,,0,
 T04,1,T04-01,"Lagerstrasse 50, 8004 Zürich",CH,,,,,,1
 T04,2,T04-02,"Militärstrasse 50, 8004 Zürich",CH,,,,,,6
 T04,3,T04-03,"Kanonengasse 20, 8004 Zürich",CH,,,,,,3
@@ -66,8 +59,6 @@ T04,12,T04-12,"Ankerstrasse 20, 8004 Zürich",CH,,,,,,4
 T04,13,T04-13,"Stauffacherstrasse 50, 8004 Zürich",CH,,,,,,4
 T04,14,T04-14,"Badenerstrasse 50, 8004 Zürich",CH,,,,,,6
 T04,15,T04-15,"Dienerstrasse 20, 8004 Zürich",CH,,,,,,1
-T04,99,T04-99,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,,,0,
-T05,0,T05-00,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,08:00,,0,
 T05,1,T05-01,"Zollstrasse 50, 8005 Zürich",CH,,,,,,1
 T05,2,T05-02,"Limmatstrasse 50, 8005 Zürich",CH,,,,,,6
 T05,3,T05-03,"Neugasse 50, 8005 Zürich",CH,,,,,,4
@@ -83,8 +74,6 @@ T05,12,T05-12,"Förrlibuckstrasse 50, 8005 Zürich",CH,,,,,,1
 T05,13,T05-13,"Pfingstweidstrasse 50, 8005 Zürich",CH,,,,,,1
 T05,14,T05-14,"Josefstrasse 200, 8005 Zürich",CH,,,,,,1
 T05,15,T05-15,"Klingenstrasse 20, 8005 Zürich",CH,,,,,,1
-T05,99,T05-99,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,,,0,
-T06,0,T06-00,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,08:00,,0,
 T06,1,T06-01,"Stampfenbachstrasse 50, 8006 Zürich",CH,,,,,,2
 T06,2,T06-02,"Weinbergstrasse 50, 8006 Zürich",CH,,,,,,2
 T06,3,T06-03,"Clausiusstrasse 20, 8006 Zürich",CH,,,,,,1
@@ -100,8 +89,6 @@ T06,12,T06-12,"Langmauerstrasse 50, 8006 Zürich",CH,,,,,,3
 T06,13,T06-13,"Kinkelstrasse 20, 8006 Zürich",CH,,,,,,1
 T06,14,T06-14,"Beckenhofstrasse 20, 8006 Zürich",CH,,,,,,1
 T06,15,T06-15,"Schaffhauserstrasse 50, 8006 Zürich",CH,,,,,,6
-T06,99,T06-99,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,,,0,
-T07,0,T07-00,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,08:00,,0,
 T07,1,T07-01,"Kreuzstrasse 20, 8008 Zürich",CH,,,,,,4
 T07,2,T07-02,"Dufourstrasse 50, 8008 Zürich",CH,,,,,,4
 T07,3,T07-03,"Seefeldstrasse 50, 8008 Zürich",CH,,,,,,4
@@ -117,8 +104,6 @@ T07,12,T07-12,"Klosbachstrasse 50, 8032 Zürich",CH,,,,,,6
 T07,13,T07-13,"Merkurstrasse 20, 8032 Zürich",CH,,,,,,1
 T07,14,T07-14,"Gemeindestrasse 20, 8032 Zürich",CH,,,,,,1
 T07,15,T07-15,"Hottingerstrasse 20, 8032 Zürich",CH,,,,,,3
-T07,99,T07-99,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,,,0,
-T08,0,T08-00,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,08:00,,0,
 T08,1,T08-01,"Wasserwerkstrasse 50, 8037 Zürich",CH,,,,,,1
 T08,2,T08-02,"Imfeldstrasse 50, 8037 Zürich",CH,,,,,,1
 T08,3,T08-03,"Rotbuchstrasse 50, 8037 Zürich",CH,,,,,,1
@@ -134,8 +119,6 @@ T08,12,T08-12,"Kürbergstrasse 20, 8049 Zürich",CH,,,,,,2
 T08,13,T08-13,"Limmattalstrasse 200, 8049 Zürich",CH,,,,,,3
 T08,14,T08-14,"Ackersteinstrasse 50, 8049 Zürich",CH,,,,,,3
 T08,15,T08-15,"Hönggerstrasse 50, 8037 Zürich",CH,,,,,,6
-T08,99,T08-99,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,,,0,
-T09,0,T09-00,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,08:00,,0,
 T09,1,T09-01,"Schaffhauserstrasse 350, 8050 Zürich",CH,,,,,,1
 T09,2,T09-02,"Franklinstrasse 20, 8050 Zürich",CH,,,,,,1
 T09,3,T09-03,"Edisonstrasse 10, 8050 Zürich",CH,,,,,,6
@@ -151,8 +134,6 @@ T09,12,T09-12,"Glatttalstrasse 50, 8052 Zürich",CH,,,,,,2
 T09,13,T09-13,"Leutschenbachstrasse 50, 8050 Zürich",CH,,,,,,6
 T09,14,T09-14,"Thurgauerstrasse 50, 8050 Zürich",CH,,,,,,1
 T09,15,T09-15,"Wallisellenstrasse 50, 8050 Zürich",CH,,,,,,1
-T09,99,T09-99,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,,,0,
-T10,0,T10-00,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,08:00,,0,
 T10,1,T10-01,"Herdernstrasse 50, 8004 Zürich",CH,,,,,,2
 T10,2,T10-02,"Hohlstrasse 400, 8048 Zürich",CH,,,,,,3
 T10,3,T10-03,"Vulkanstrasse 50, 8048 Zürich",CH,,,,,,1
@@ -168,4 +149,3 @@ T10,12,T10-12,"Fellenbergstrasse 200, 8047 Zürich",CH,,,,,,3
 T10,13,T10-13,"Albisriederstrasse 200, 8047 Zürich",CH,,,,,,2
 T10,14,T10-14,"Letzigraben 100, 8047 Zürich",CH,,,,,,2
 T10,15,T10-15,"Badenerstrasse 500, 8048 Zürich",CH,,,,,,2
-T10,99,T10-99,"Zürich HB (Depot), 8001 Zürich",CH,47.3779,8.5403,,,0,

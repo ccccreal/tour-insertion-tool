@@ -70,17 +70,14 @@ def test_moved_stops():
 
 def test_pipeline_optimize_never_worse_in_total():
     rows = lambda: [
-        {"tour_id": "T", "seq": "0", "stop_id": "D0", "lat": "45.7606", "lon": "4.8597",
-         "tw_start": "08:00", "service_min": "0"},
         {"tour_id": "T", "seq": "1", "stop_id": "S1", "lat": "45.7330", "lon": "4.8180"},
         {"tour_id": "T", "seq": "2", "stop_id": "S2", "lat": "45.7670", "lon": "4.8340"},
         {"tour_id": "T", "seq": "3", "stop_id": "S3", "lat": "45.7400", "lon": "4.8150"},
-        {"tour_id": "T", "seq": "4", "stop_id": "S4", "lat": "45.7610", "lon": "4.8260"},
-        {"tour_id": "T", "seq": "9", "stop_id": "D1", "lat": "45.7606", "lon": "4.8597",
-         "service_min": "0"}]
+        {"tour_id": "T", "seq": "4", "stop_id": "S4", "lat": "45.7610", "lon": "4.8260"}]
     orders = [{"order_id": "N1", "lat": "45.7450", "lon": "4.8420"}]
-    plain = run(rows(), [dict(o) for o in orders], Settings())
-    opt = run(rows(), [dict(o) for o in orders], Settings(optimize=True))
+    depot = "45.7606, 4.8597"
+    plain = run(rows(), [dict(o) for o in orders], Settings(depot=depot))
+    opt = run(rows(), [dict(o) for o in orders], Settings(depot=depot, optimize=True))
     assert opt.changes and not plain.changes
     total_before = sum(c.minutes_before for c in opt.changes)
     total_after = sum(c.minutes_after for c in opt.changes)
@@ -108,5 +105,5 @@ def test_winterthur_optimized_not_longer_in_total():
     from tour_insertion.csv_io import read_rows
     w = Path(__file__).resolve().parents[1] / "examples" / "winterthur"
     r = run(read_rows(w / "tours.csv"), read_rows(w / "orders.csv"),
-            Settings(optimize=True))
+            Settings(optimize=True, depot="47.5000, 8.7236"))
     assert sum(c.minutes_after for c in r.changes) <= sum(c.minutes_before for c in r.changes)

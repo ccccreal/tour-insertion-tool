@@ -21,10 +21,12 @@ uv sync                     # or: pip install -e .
 uv run pytest
 
 # offline: coordinates are in the CSV
-uv run tour-insert examples/winterthur/tours.csv examples/winterthur/orders.csv -o out --map
+uv run tour-insert examples/winterthur/tours.csv examples/winterthur/orders.csv \
+    --depot "47.5000, 8.7236" -o out --map
 
 # online: only addresses, geocoded on the fly
-uv run tour-insert examples/lyon/tours.csv examples/lyon/orders.csv -o out-lyon --map
+uv run tour-insert examples/lyon/tours.csv examples/lyon/orders.csv \
+    --depot "Place Charles Béraudier, 69003 Lyon" -o out-lyon --map
 
 # plan tours from an Excel stop list (online, geocodes 141 addresses once)
 uv run tour-insert --stops examples/praxen/stops.xlsx --template examples/praxen/template.json \
@@ -95,14 +97,15 @@ internet.
 
 ### Streamlit demo (older)
 
-`streamlit_demo/app.py` is the first web version (Streamlit, no drag &
-drop). It still runs the demo on Streamlit Community Cloud (main file path
-`streamlit_demo/app.py`; its own `requirements.txt` next to it):
-`uv sync --extra app && uv run streamlit run streamlit_demo/app.py`.
+The first web version (Streamlit, no drag & drop, old file format with the
+depot in the tours file) lives frozen on the branch `streamlit-demo`, which
+Streamlit Community Cloud deploys. It is no longer developed.
 
 ## Input
 
-`tours.csv`
+`tours.csv`: the customer stops of each tour, in driving order. No depot
+rows: where and when tours start and end is set in the tool (see *Start and
+end of the tours*).
 
 | column | meaning |
 |---|---|
@@ -120,15 +123,24 @@ drop). It still runs the demo on Streamlit Community Cloud (main file path
 `orders.csv`: same columns, with `order_id` instead of `tour_id, seq, stop_id`
 (and without `vehicle`).
 
-The first stop's `tw_start` is the start time of the tour.
+## Start and end of the tours
 
-The last stop does not have to be the depot. A tour may end at a
-connection point (hand-over to another vehicle, a train, a second depot):
-give the last stop its own address and, if it must be reached in time, a
-`tw_end`. New stops are always inserted before it. On the map the depot of
-a round trip is marked **D**; a tour that ends elsewhere has **S** (start)
-and **E** (end), and E turns red when the tour arrives too late.
-Example: tour T2 in `examples/winterthur/`.
+Set once for all tours (web page: sidebar *Depot and times*; command line
+in brackets), for both ways to work:
+
+| setting | choices |
+|---|---|
+| depot | address or `lat, lon` (`--depot`) |
+| start | at the depot, or at the first stop (`--start-at depot\|first`) |
+| end | back to the depot, at another place such as a connection point (hand-over, train, second depot), or open at the last stop (`--end-at depot\|open\|ADDRESS`) |
+| start time | e.g. 08:00 (`--start`) |
+| latest end | optional, e.g. 12:00 (`--end`); with an open end every stop must be done by then |
+
+New stops are never inserted before a start at the depot or after an end
+at the depot or a connection point. On the map a round trip's depot is
+**D**; otherwise **S** (start) and **E** (end); E turns red when the tour
+arrives too late. In `tours_new.csv` start and end are rows with type
+`start` / `end`.
 
 ## Planning from a stop list
 
@@ -199,9 +211,8 @@ drops filled. `tours_new.csv` has the columns `vehicle`, `type` and `load`
 Both are free and need no key. Results are cached in `.geocode_cache.json`
 (`--geocode-cache`), so each address is looked up once.
 
-- The **depot** (first and last stop of a tour) must be found: otherwise the
-  run stops with a list of the addresses, because every time of the tour
-  depends on it. Tip: give the depot as lat/lon, it rarely changes.
+- The **depot** (and an end place) must be found: otherwise the run stops,
+  because every time of the tour depends on it. Tip: give it as lat/lon.
 - Any **other tour stop** that cannot be geocoded reliably is left out: the
   tour is computed without it and the stop is listed in `skipped_stops.csv`
   (and in the app). Times after that stop are then slightly too early.
@@ -211,8 +222,8 @@ Both are free and need no key. Results are cached in `.geocode_cache.json`
 ## Optimising tours (optional)
 
 `--optimize` (or the checkbox in the app) also improves the order of the
-stops **within each tour**: same stops, same tour, time windows kept, depot
-stays first and last. Steps: improve the given tours, insert the new orders,
+stops **within each tour**: same stops, same tour, time windows kept, start
+and end stay first and last. Steps: improve the given tours, insert the new orders,
 improve once more.
 
 - Moves: move a run of 1-3 stops elsewhere in the tour, or reverse a part of
@@ -238,9 +249,8 @@ Detour factor and speed are assumptions, not measured for any city.
 
 ## Assumptions
 
-- New orders are single stops (no pickup/delivery pairs), no capacities.
-- First and last stop of each tour stay fixed (depot). Use `--open-start` /
-  `--open-end` to allow inserting before/after them.
+- New orders are single stops (no pickup/delivery pairs).
+- Start and end are the same for all tours (settings, not in the files).
 - Cost of an insertion = extra travel time + service time of the new stop.
   Waiting time does not count.
 - Several new orders: greedy cheapest insertion. The order with the smallest
@@ -269,7 +279,7 @@ this repository.
 
 - `examples/winterthur/`: 2 tours, 7 orders, with approximate coordinates
   (runs offline). Shows most features at once: T1 is a cargo bike (10
-  items), T2 a car (40 items) that ends at a railway station by 10:00.
+  items), T2 a car (40 items); depot Winterthur HB `47.5000, 8.7236`.
   N3 lies on the bike's route, but the bike is too full, so the car takes
   it; N5 and N6 are pickups; N7 cannot be reached in time on purpose.
 - `examples/praxen/stops.xlsx`: 141 invented practices (Zurich region),

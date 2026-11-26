@@ -35,11 +35,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--template", type=Path,
                    help="JSON column mapping for the stops/orders file (see stop_import.py)")
     p.add_argument("--depot", default="",
-                   help='with --stops: depot address or "lat, lon"')
+                   help='depot: address or "lat, lon" (tours start and end there)')
+    p.add_argument("--start-at", choices=["depot", "first"], default="depot",
+                   help="tours start at the depot (default) or at their first stop")
+    p.add_argument("--end-at", default="depot", metavar="depot|open|ADDRESS",
+                   help="tours end at the depot (default), at their last stop "
+                        "(open) or at another place (address or \"lat, lon\")")
     p.add_argument("--fleet", nargs="+", default=[], metavar="TYPE=N",
                    help="with --stops: number of vehicles per type, e.g. Lastenvelo=4 Auto=1")
-    p.add_argument("--start", default="08:00", help="with --stops: tour start (default 08:00)")
-    p.add_argument("--end", default="", help="with --stops: latest return, e.g. 12:00")
+    p.add_argument("--start", default="08:00", help="start time of all tours (default 08:00)")
+    p.add_argument("--end", default="", help="latest arrival at the end, e.g. 12:00")
     p.add_argument("-o", "--out", type=Path, default=Path("out"),
                    help="output folder (default: out)")
     p.add_argument("--map", action="store_true",
@@ -54,10 +59,6 @@ def build_parser() -> argparse.ArgumentParser:
                    help="service time where the CSV has none (default 3)")
     p.add_argument("--tolerance-min", type=int, default=d.tolerance_min,
                    help="minutes a stop may be later than tw_end (default 0)")
-    p.add_argument("--open-start", action="store_true",
-                   help="allow inserting before the first stop")
-    p.add_argument("--open-end", action="store_true",
-                   help="allow inserting after the last stop")
     p.add_argument("--optimize", action="store_true",
                    help="also improve the stop order within every tour")
     p.add_argument("--vehicles", type=Path, default=None,
@@ -101,10 +102,14 @@ def main(argv: list[str] | None = None, geocoder: Geocoder | None = None) -> int
                              f"({', '.join(vehicles)})")
         vehicles[name]["count"] = int(count)
     try:
-        settings = Settings(args.detour_factor, args.speed, args.service_min,
-                            args.tolerance_min, args.open_start, args.open_end,
-                            args.min_score, args.optimize, vehicles, args.depot,
-                            parse_time(args.start), parse_time(args.end))
+        end_mode = args.end_at if args.end_at in ("depot", "open") else "place"
+        settings = Settings(
+            detour_factor=args.detour_factor, speed_m_per_min=args.speed,
+            service_min=args.service_min, tolerance_min=args.tolerance_min,
+            min_score=args.min_score, optimize=args.optimize, vehicles=vehicles,
+            depot=args.depot, start_at_depot=args.start_at == "depot",
+            end_mode=end_mode, end_place=args.end_at if end_mode == "place" else "",
+            day_start=parse_time(args.start), day_end=parse_time(args.end))
     except ValueError as error:
         raise SystemExit(f"bad time: {error}") from error
     geocoder = geocoder or make_geocoder(settings, args.geocode_cache)

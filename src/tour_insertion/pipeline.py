@@ -5,16 +5,29 @@ compute exactly the same thing.
 
     rows -> geocode missing coordinates
          -> tours (stops without coordinates skipped) + orders
+         -> start and end of every tour from the settings
          -> [optimize existing tours] -> insert orders -> [optimize again]
          -> schedules
 
+Start and end of a tour
+-----------------------
+The input files hold customer stops only. Where and when tours start and
+end is a setting, the same for all tours:
+
+    start_at_depot  True: start at the depot at day_start
+                    False: start at the first customer at day_start
+    end_mode        "depot": back to the depot
+                    "place": end at end_place (e.g. a connection point)
+                    "open": end at the last customer
+    day_end         latest arrival at the end; with an open end, the
+                    latest time for every stop
+
 Addresses that cannot be geocoded
 ---------------------------------
-depot (first and last stop of a tour)  -> error, nothing is computed:
-                                          every time of the tour depends on it
-other stop of a tour                   -> skipped: the tour is computed
-                                          without it, reported in `skipped`
-new order                              -> not planned, reported in `unplaced`
+depot / end place      -> error, nothing is computed
+stop of a tour         -> skipped: the tour is computed without it,
+                          reported in `skipped`
+new order              -> not planned, reported in `unplaced`
 """
 
 from __future__ import annotations
@@ -56,8 +69,6 @@ class Settings:
     speed_m_per_min: float = 250.0
     service_min: int = 3
     tolerance_min: int = 0
-    open_start: bool = False
-    open_end: bool = False
     min_score: float = 0.5
     optimize: bool = False
     # Vehicle types: name -> {"capacity": items, "speed_kmh": km/h}. A tour
@@ -65,13 +76,22 @@ class Settings:
     # missing speed = speed_m_per_min. Tours without a vehicle: no limit.
     vehicles: Mapping[str, Mapping[str, float | int | None]] = field(
         default_factory=lambda: {k: dict(v) for k, v in DEFAULT_VEHICLES.items()})
-    # Planning from scratch (no tours given, see plan_new): where the tours
-    # start and end ("address" or "lat, lon"), when they start and by when
-    # they must be back (minutes since midnight, None = no limit). How many
-    # vehicles of each type: "count" in `vehicles`.
+    # Start and end of every tour (see the module docstring). depot and
+    # end_place: "address" or "lat, lon". Times in minutes since midnight;
+    # day_end None = no limit. Planning from scratch also uses "count" in
+    # `vehicles` (how many vehicles of each type are available).
     depot: str = ""
+    start_at_depot: bool = True
+    end_mode: str = "depot"
+    end_place: str = ""
     day_start: int = 480
     day_end: int | None = None
+
+    @property
+    def insertion_options(self) -> dict:
+        """fixed_first / fixed_last for insertion and optimizing."""
+        return {"fixed_first": self.start_at_depot, "fixed_last": self.end_mode != "open",
+                "tolerance_min": self.tolerance_min}
 
 
 def apply_vehicles(tours: Mapping[str, Tour], settings: Settings
@@ -146,31 +166,13 @@ def _reason(result: GeocodeResult | None) -> str:
     return "geocode_uncertain"
 
 
-def _depot_rows(tour_rows: list[dict]) -> set[int]:
-    """Indices (in tour_rows) of the first and last stop of every tour."""
-    by_tour: dict[str, list[tuple[int, int]]] = defaultdict(list)
-    for i, row in enumerate(tour_rows):
-        tour_id = (row.get("tour_id") or "").strip()
-        try:
-            seq = int(row.get("seq") or "")
-        except ValueError as error:
-            raise InputError(f"{row.get('_where', 'tours')}: seq must be a number") from error
-        by_tour[tour_id].append((seq, i))
-    ends = set()
-    for items in by_tour.values():
-        items.sort()
-        ends.update({items[0][1], items[-1][1]})
-    return ends
-
-
 def geocode_rows(tour_rows: list[dict], order_rows: list[dict],
                  geocoder: Geocoder, default_service: int = 3
                  ) -> tuple[list[GeocodeResult], list[Unplaced], list[Unplaced]]:
     """Fill missing coordinates (rows are changed in place).
 
     Returns (all results, unplaced orders, skipped tour stops). Rows that
-    still have no coordinates afterwards are skipped / unplaced; a depot
-    without coordinates raises InputError.
+    still have no coordinates afterwards are skipped / unplaced.
     """
     if not any(needs_geocoding(r) for r in tour_rows + order_rows):
         return [], [], []
@@ -180,18 +182,6 @@ def geocode_rows(tour_rows: list[dict], order_rows: list[dict],
     finally:
         geocoder.save()
     by_query = {r.query: r for r in tour_results + order_results}
-
-    depots = _depot_rows(tour_rows)
-    bad_depots = [r for i, r in enumerate(tour_rows)
-                  if i in depots and needs_geocoding(r)]
-    if bad_depots:
-        lines = "\n".join(
-            f"  {r.get('tour_id', '')}: {r['address'].strip()}  ->  "
-            f"{(by_query.get(r['address'].strip()) or GeocodeResult('', '', NOT_FOUND)).label or 'not found'}"
-            for r in bad_depots)
-        raise InputError("The depot (first/last stop of a tour) could not be "
-                         "geocoded reliably. Fix the address or add lat/lon:\n"
-                         + lines)
 
     skipped = [unplaced_from_row(r, "stop_id", _reason(by_query.get(r["address"].strip())),
                                  default_service, (r.get("tour_id") or "").strip())
@@ -204,14 +194,15 @@ def geocode_rows(tour_rows: list[dict], order_rows: list[dict],
 
 def run(tour_rows: list[dict], order_rows: list[dict], settings: Settings,
         geocoder: Geocoder | None = None) -> RunResult:
-    """Plan everything. `rows` are dicts as read from the CSV files;
-    rows without lat/lon are geocoded (and changed in place)."""
+    """Insert orders into tours. `rows` are dicts as read from the CSV
+    files; rows without lat/lon are geocoded (and changed in place)."""
     if not tour_rows:
         raise InputError("the tours file is empty")
+    geocoder = geocoder or make_geocoder(settings)
+    start, end, end_results = tour_ends(settings, geocoder)
     try:
         geo_results, geo_unplaced, skipped = geocode_rows(
-            tour_rows, order_rows, geocoder or make_geocoder(settings),
-            settings.service_min)
+            tour_rows, order_rows, geocoder, settings.service_min)
         tours = tours_from_rows([r for r in tour_rows if not needs_geocoding(r)],
                                 settings.service_min)
         orders = orders_from_rows([r for r in order_rows if not needs_geocoding(r)],
@@ -223,14 +214,15 @@ def run(tour_rows: list[dict], order_rows: list[dict], settings: Settings,
     except (KeyError, ValueError) as error:
         raise InputError(str(error)) from error
 
+    tours = {t: frame_tour(tour, settings, start, end) for t, tour in tours.items()}
+    orders = [cap_window(o, settings) for o in orders]
+    geo_results = end_results + geo_results
     tours, model, models = apply_vehicles(tours, settings)
 
     def model_of(tour_id: str) -> TravelModel:
         return models.get(tour_id, model)
 
-    options = dict(fixed_first=not settings.open_start,
-                   fixed_last=not settings.open_end,
-                   tolerance_min=settings.tolerance_min)
+    options = settings.insertion_options
     try:
         plain = insert_orders(tours, orders, model, models=models, **options)
     except ValueError as error:                       # duplicate ids
@@ -265,32 +257,76 @@ def run(tour_rows: list[dict], order_rows: list[dict], settings: Settings,
 # Planning from scratch: only a list of stops, no tours yet
 # --------------------------------------------------------------------------
 
-def locate_depot(settings: Settings, geocoder: Geocoder) -> tuple[Stop, GeocodeResult | None]:
-    """The depot from settings.depot: "47.3779, 8.5403" or an address."""
-    text = settings.depot.strip()
+COORDINATES = re.compile(r"(-?\d+(?:\.\d+)?)\s*[,; ]\s*(-?\d+(?:\.\d+)?)")
+
+
+def locate(text: str, what: str, geocoder: Geocoder) -> tuple[Stop, GeocodeResult | None]:
+    """A place from a setting: "47.3779, 8.5403" or an address."""
+    text = text.strip()
     if not text:
-        raise InputError("planning without tours needs a depot (address or lat, lon)")
-    m = re.fullmatch(r"(-?\d+(?:\.\d+)?)\s*[,; ]\s*(-?\d+(?:\.\d+)?)", text)
+        raise InputError(f"the {what} is missing (address or lat, lon)")
+    m = COORDINATES.fullmatch(text)
     if m:
-        return Stop("depot", float(m.group(1)), float(m.group(2)), address=text), None
+        return Stop(what, float(m.group(1)), float(m.group(2)), address=text), None
     try:
         result = geocoder.geocode(text)
     except OSError as error:
         raise InputError(f"geocoding service not reachable: {error}") from error
     except ValueError as error:
-        raise InputError(f"depot: {error}") from error
+        raise InputError(f"{what}: {error}") from error
     finally:
         geocoder.save()
     if result.status != "ok" or result.lat is None:
         found = f" (found: {result.label})" if result.label else ""
-        raise InputError(f"the depot address could not be found reliably: {text}{found}. "
+        raise InputError(f"the {what} address could not be found reliably: {text}{found}. "
                          "Check it or give lat, lon.")
-    return Stop("depot", result.lat, result.lon, address=result.label or text,
+    return Stop(what, result.lat, result.lon, address=result.label or text,
                 country=result.country), result
 
 
-def empty_tours(depot: Stop, settings: Settings) -> dict[str, Tour]:
-    """One tour depot -> depot per vehicle ("Lastenvelo 1", "Lastenvelo 2", ...)."""
+def tour_ends(settings: Settings, geocoder: Geocoder
+              ) -> tuple[Stop | None, Stop | None, list[GeocodeResult]]:
+    """(start place or None, end place or None, geocoding results)."""
+    if settings.end_mode not in ("depot", "place", "open"):
+        raise InputError(f"end_mode must be depot, place or open, got {settings.end_mode!r}")
+    results, depot = [], None
+    if settings.start_at_depot or settings.end_mode == "depot":
+        depot, r = locate(settings.depot, "depot", geocoder)
+        results += [r] if r else []
+    end = depot if settings.end_mode == "depot" else None
+    if settings.end_mode == "place":
+        end, r = locate(settings.end_place, "end place", geocoder)
+        results += [r] if r else []
+    return (depot if settings.start_at_depot else None), end, results
+
+
+def frame_tour(tour: Tour, settings: Settings, start: Stop | None, end: Stop | None) -> Tour:
+    """The tour with its start and end stops (from the settings) around the
+    customer stops. Without a start stop the tour starts at day_start at
+    its first customer; with an open end day_end limits every stop."""
+    stops = tuple(cap_window(s, settings) for s in tour.stops if not s.role)
+    if start is not None:
+        stops = (replace(start, stop_id=f"{tour.tour_id} start", role="start",
+                         tw_start=settings.day_start, tw_end=None, service_min=0),) + stops
+    if end is not None:
+        stops += (replace(end, stop_id=f"{tour.tour_id} end", role="end",
+                          tw_start=None, tw_end=settings.day_end, service_min=0),)
+    return replace(tour, stops=stops,
+                   start=None if start is not None else settings.day_start)
+
+
+def cap_window(stop: Stop, settings: Settings) -> Stop:
+    """With an open end there is no end stop to hold day_end: every stop
+    must then be served by day_end."""
+    if settings.end_mode != "open" or settings.day_end is None:
+        return stop
+    if stop.tw_end is not None and stop.tw_end <= settings.day_end:
+        return stop
+    return replace(stop, tw_end=settings.day_end)
+
+
+def empty_tours(start: Stop | None, end: Stop | None, settings: Settings) -> dict[str, Tour]:
+    """One empty tour per vehicle ("Lastenvelo 1", "Lastenvelo 2", ...)."""
     tours = {}
     for name, spec in settings.vehicles.items():
         try:
@@ -299,13 +335,15 @@ def empty_tours(depot: Stop, settings: Settings) -> dict[str, Tour]:
             raise InputError(f"vehicle {name!r}: count must be a whole number") from error
         for i in range(1, count + 1):
             tour_id = f"{name} {i}"
-            start = replace(depot, stop_id=f"{tour_id} start", tw_start=settings.day_start)
-            end = replace(depot, stop_id=f"{tour_id} end", tw_end=settings.day_end)
-            tours[tour_id] = Tour(tour_id, (start, end), vehicle=name)
+            tours[tour_id] = frame_tour(Tour(tour_id, (), vehicle=name), settings, start, end)
     if not tours:
         raise InputError("planning without tours needs at least one vehicle "
                          "(set how many of each type are available)")
     return tours
+
+
+def customers(tour: Tour) -> list[Stop]:
+    return [s for s in tour.stops if not s.role]
 
 
 def plan_new(order_rows: list[dict], settings: Settings, geocoder: Geocoder | None = None,
@@ -319,7 +357,7 @@ def plan_new(order_rows: list[dict], settings: Settings, geocoder: Geocoder | No
     optimal plan (see README).
     """
     geocoder = geocoder or make_geocoder(settings)
-    depot, depot_result = locate_depot(settings, geocoder)
+    start, end, end_results = tour_ends(settings, geocoder)
     try:
         geo_results, geo_unplaced, _ = geocode_rows([], order_rows, geocoder,
                                                     settings.service_min)
@@ -332,23 +370,24 @@ def plan_new(order_rows: list[dict], settings: Settings, geocoder: Geocoder | No
     missing = [unplaced_from_row(r, "order_id", "address_missing", settings.service_min)
                for r in no_address]
 
-    tours, model, models = apply_vehicles(empty_tours(depot, settings), settings)
+    orders = [cap_window(o, settings) for o in orders]
+    tours, model, models = apply_vehicles(empty_tours(start, end, settings), settings)
     model = CachedModel(model)
     models = {t: CachedModel(m) for t, m in models.items()}
-    options = dict(fixed_first=True, fixed_last=True, tolerance_min=settings.tolerance_min)
+    options = settings.insertion_options
     try:
         result = insert_orders(tours, orders, model, models=models, **options)
     except ValueError as error:
         raise InputError(str(error)) from error
     used = {t: improve_tour(tour, models.get(t, model), **options)
-            for t, tour in result.tours.items() if len(tour) > 2}
+            for t, tour in result.tours.items() if customers(tour)}
     # number the used vehicles 1, 2, 3 per type (no gaps for unused ones)
     final, new_models, seen = {}, {}, defaultdict(int)
     for old_id, tour in used.items():
         seen[tour.vehicle] += 1
         new_id = f"{tour.vehicle} {seen[tour.vehicle]}"
-        stops = (replace(tour.stops[0], stop_id=f"{new_id} start"), *tour.stops[1:-1],
-                 replace(tour.stops[-1], stop_id=f"{new_id} end"))
+        stops = tuple(replace(s, stop_id=f"{new_id} {s.role}") if s.role else s
+                      for s in tour.stops)
         final[new_id] = replace(tour, tour_id=new_id, stops=stops)
         if old_id in models:
             new_models[new_id] = models[old_id]
@@ -359,4 +398,4 @@ def plan_new(order_rows: list[dict], settings: Settings, geocoder: Geocoder | No
     inserted = [replace(o, tour_id=renamed[o.tour_id]) for o in result.inserted]
     return RunResult(final, orders, inserted,
                      missing + geo_unplaced + result.unplaced, schedules,
-                     ([depot_result] if depot_result else []) + geo_results)
+                     end_results + geo_results)

@@ -26,10 +26,14 @@ def client():
     return TestClient(create_app(lambda settings: fake))
 
 
+WINTERTHUR_DEPOT = "47.5000, 8.7236"
+
+
 def plan(client, tours: bytes, orders: bytes, settings: dict | None = None):
+    settings = {"depot": WINTERTHUR_DEPOT, **(settings or {})}
     return client.post("/api/plan", files={"tours": ("tours.csv", tours),
                                            "orders": ("orders.csv", orders)},
-                       data={"settings": json.dumps(settings or {})})
+                       data={"settings": json.dumps(settings)})
 
 
 def test_health_profiles_examples(client):
@@ -53,7 +57,8 @@ def test_plan_winterthur(client):
     assert body["unplaced"][0]["lat"] is not None          # can be dragged in
     assert body["changes"] and body["csv"]["tours"].startswith("tour_id")
     first = body["tours"][0]["stops"][0]
-    assert first["arrival_hhmm"] == "08:00" and first["stop_id"].endswith("-00")
+    assert first["arrival_hhmm"] == "08:00" and first["stop_id"] == "T1 start"
+    assert first["role"] == "start" and body["tours"][0]["stops"][-1]["role"] == "end"
 
 
 def test_plan_bad_input_is_400(client):
@@ -65,12 +70,10 @@ def test_plan_bad_input_is_400(client):
 
 def test_plan_with_geocoding_and_skipped_stop(client):
     tours = ("tour_id,seq,stop_id,address,country,lat,lon,tw_start,tw_end,service_min\n"
-             "A,0,A0,\"Depot, 69003 Lyon\",FR,,,08:00,,0\n"
              "A,1,A1,\"Stop 1, 69001 Lyon\",FR,,,,,\n"
-             "A,2,A2,\"Missing, 69001 Lyon\",FR,,,,,\n"
-             "A,3,A3,\"Depot, 69003 Lyon\",FR,,,,,0\n").encode()
+             "A,2,A2,\"Missing, 69001 Lyon\",FR,,,,,\n").encode()
     orders = "order_id,address,country\nN1,\"New 1, 69002 Lyon\",FR\n".encode()
-    body = plan(client, tours, orders).json()
+    body = plan(client, tours, orders, {"depot": "Depot, 69003 Lyon"}).json()
     assert [(s["tour_id"], s["order_id"]) for s in body["skipped"]] == [("A", "A2")]
     assert "N1" in [s["stop_id"] for s in body["tours"][0]["stops"]]
 
@@ -88,7 +91,7 @@ def test_schedule_after_manual_move(client):
     assert r.status_code == 200, r.text
     out = r.json()
     ids_t2 = [s["stop_id"] for s in out["tours"][1]["stops"]]
-    assert ids_t2[-2] == stop["stop_id"] and ids_t2[-1].endswith("-99")
+    assert ids_t2[-2] == stop["stop_id"] and ids_t2[-1] == "T2 end"
     assert out["tours"][1]["duration"] > tours[1]["duration"]       # longer now
     assert "N7" in out["csv"]["unplaced"]
 
@@ -111,9 +114,7 @@ def test_password(monkeypatch):
 
 def test_items_are_read_and_returned(client):
     tours = (b"tour_id,seq,stop_id,address,lat,lon,tw_start,service_min,items\n"
-             b"A,0,A0,Depot,47.50,8.72,08:00,0,\n"
-             b"A,1,A1,One,47.51,8.73,,,3\n"
-             b"A,2,A2,Depot,47.50,8.72,,0,\n")
+             b"A,1,A1,One,47.51,8.73,,,3\n")
     orders = b"order_id,address,lat,lon,items\nN1,New,47.505,8.725,2\n"
     body = plan(client, tours, orders).json()
     stops = {s["stop_id"]: s for s in body["tours"][0]["stops"]}
@@ -160,9 +161,7 @@ def test_geocode_failure_keeps_details_for_manual_placing(client):
 
 def test_vehicles_capacity_and_kind(client):
     tours = ("tour_id,seq,stop_id,address,country,lat,lon,tw_start,tw_end,service_min,items,type,vehicle\n"
-             "T1,0,D,Depot,CH,47.5000,8.7236,08:00,,0,,,Velo\n"
-             "T1,1,A,A,CH,47.4930,8.7180,,,3,6,,\n"
-             "T1,2,E,Depot,CH,47.5000,8.7236,,,0,,,\n").encode()
+             "T1,1,A,A,CH,47.4930,8.7180,,,3,6,,Velo\n").encode()
     orders = ("order_id,address,country,lat,lon,items,type\n"
               "N1,P,CH,47.5030,8.7170,3,pickup\n"
               "N2,Q,CH,47.4990,8.7520,5,drop\n").encode()
@@ -263,3 +262,19 @@ def test_exports(zurich_client):
     assert r.status_code == 200 and r.content.startswith(b"%PDF")
     assert f'tour_{names[0].replace(" ", "_")}.pdf' in r.headers["content-disposition"]
     assert zurich_client.post("/api/export/doc", json=payload).status_code == 404
+
+
+def test_open_start_and_end_place(client):
+    tours = (EXAMPLES / "winterthur/tours.csv").read_bytes()
+    orders = (EXAMPLES / "winterthur/orders.csv").read_bytes()
+    body = plan(client, tours, orders, {"start_at_depot": False, "end_mode": "place",
+                                        "end_place": "47.5076, 8.7614", "day_start": 450}).json()
+    t1 = body["tours"][0]
+    assert t1["stops"][0]["role"] == "" and t1["stops"][0]["arrival"] == 450
+    assert t1["stops"][-1]["role"] == "end" and t1["stops"][-1]["lat"] == 47.5076
+    # a manual reschedule keeps the start time without a start stop
+    r = client.post("/api/schedule", json={"settings": body["settings"], "tours": body["tours"]})
+    assert r.json()["tours"][0]["stops"][0]["arrival"] == 450
+    assert client.get("/api/example-depots").json()["winterthur"] == "47.5000, 8.7236"
+    bad = plan(client, tours, orders, {"end_mode": "somewhere"})
+    assert bad.status_code == 400

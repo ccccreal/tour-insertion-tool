@@ -79,6 +79,7 @@ async function init() {
   $("profile").addEventListener("change", () => applyProfile($("profile").value));
   $("run").addEventListener("click", runPlan);
   $("undo").addEventListener("click", undo);
+  $("end-at").addEventListener("change", endChanged);
   $("add-vehicle").addEventListener("click", () => $("vehicles").append(vehicleRow("", {})));
   document.querySelectorAll("input[name=mode]").forEach(r =>
     r.addEventListener("change", () => setMode(r.value)));
@@ -89,6 +90,7 @@ async function init() {
     state.profiles = await (await fetch("api/profiles")).json();
     state.examples = await (await fetch("api/examples")).json();
     state.planExamples = await (await fetch("api/plan-examples")).json();
+    state.exampleDepots = await (await fetch("api/example-depots")).json();
   } catch (e) {
     showError("Server not reachable: " + e);
   }
@@ -142,12 +144,13 @@ function fillSources() {
 async function sourceChanged() {
   const source = selectedSource();
   $("upload-box").hidden = source !== "upload";
+  const example = source.startsWith("plan:") ? source.slice(5) : source;
+  if (state.exampleDepots && state.exampleDepots[example]) $("depot").value = state.exampleDepots[example];
   if (source.startsWith("plan:")) {                    // example stop list + its template
     const name = source.slice(5);
     const blob = await (await fetch(`api/plan-examples/${name}/stops`)).blob();
     const example = state.planExamples.find(e => e.name === name);
     await chooseFile(new File([blob], `${name}.xlsx`), example && example.template);
-    if (!$("depot").value.trim()) $("depot").value = "Bahnhofplatz 1, 8001 Zürich";
   } else {
     chooseFile(source === "upload" ? ($("orders-file").files[0] || null) : null);
   }
@@ -322,8 +325,10 @@ function applyProfile(name) {
   $("service").value = p.service_min;
   $("tolerance").value = p.tolerance_min;
   $("optimize").checked = !!p.optimize;
-  $("open-start").checked = !!p.open_start;
-  $("open-end").checked = !!p.open_end;
+  $("start-at").value = p.start_at_depot === false ? "first" : "depot";
+  $("end-at").value = p.end_mode || "depot";
+  if (p.end_place) $("end-place").value = p.end_place;
+  endChanged();
   $("min-score").value = p.min_score;
   renderVehicles(p.vehicles || {});
   if (p.depot) $("depot").value = p.depot;
@@ -371,14 +376,19 @@ function readSettings() {
     service_min: Math.round(Number($("service").value)),
     tolerance_min: Math.round(Number($("tolerance").value)),
     optimize: $("optimize").checked,
-    open_start: $("open-start").checked,
-    open_end: $("open-end").checked,
     min_score: Number($("min-score").value),
     vehicles: readVehicles(),
     depot: $("depot").value.trim(),
+    start_at_depot: $("start-at").value === "depot",
+    end_mode: $("end-at").value,
+    end_place: $("end-place").value.trim(),
     day_start: minutes($("day-start").value) ?? 480,
     day_end: minutes($("day-end").value)
   };
+}
+
+function endChanged() {
+  $("end-place-box").hidden = $("end-at").value !== "place";
 }
 
 function minutes(hhmmText) {           // "08:30" -> 510, "" -> null
@@ -410,7 +420,14 @@ async function runPlan() {
       form.append("tours", tours); form.append("orders", orders);
       if (state.needsMapping && state.inspected) form.append("template", JSON.stringify(currentTemplate()));
     }
-    form.append("settings", JSON.stringify(readSettings()));
+    const settings = readSettings();
+    if (!settings.depot && (settings.start_at_depot || settings.end_mode === "depot")) {
+      showError(t("need_depot")); $("depot").focus(); return;
+    }
+    if (settings.end_mode === "place" && !settings.end_place) {
+      showError(t("need_end_place")); $("end-place").focus(); return;
+    }
+    form.append("settings", JSON.stringify(settings));
     $("run").disabled = true; $("run").textContent = t("running");
     const response = await fetch("api/plan", { method: "POST", body: form });
     const data = await response.json().catch(() => ({ detail: response.statusText }));
@@ -581,12 +598,10 @@ function renderMap() {
                  opacity: dim(tour.tour_id) ? 0.2 : 0.85 })
       .bindTooltip(tour.tour_id).addTo(layer);
     let number = 0;
-    const last = tour.stops.length - 1;
-    const roundTrip = metres(tour.stops[0], tour.stops[last]) < SAME_LOCATION_M;
     tour.stops.forEach((s, k) => {
-      const depot = (k === 0 || k === last) && !s.is_new;
+      const depot = !!s.role;
       if (depot) {
-        const role = roundTrip ? "D" : (k === 0 ? "S" : "E");
+        const role = roleLabel(tour, s);
         const key = spotKey(s.lat, s.lon);
         if (!depots.has(key)) depots.set(key, { lat: s.lat, lon: s.lon, address: s.address,
                                                 roles: {}, fill });
@@ -984,15 +999,30 @@ function selectTour(id) {
 
 function changeOf(tourId) { return state.changes.find(c => c.tour_id === tourId); }
 
+// Start and end of a tour are stops with role "start" / "end" (set by the
+// server from the settings). Label: D when both are at the same place
+// (round trip), else S and E.
+function roleLabel(tour, s) {
+  const start = tour.stops.find(x => x.role === "start"), end = tour.stops.find(x => x.role === "end");
+  if (start && end && metres(start, end) < SAME_LOCATION_M) return "D";
+  return s.role === "start" ? "S" : "E";
+}
+
 function tourFacts(tr) {
-  const last = tr.stops[tr.stops.length - 1];
-  const roundTrip = metres(tr.stops[0], last) < SAME_LOCATION_M;
+  const start = tr.stops.find(s => s.role === "start");
+  const end = tr.stops.find(s => s.role === "end");
+  const customers = tr.stops.filter(s => !s.role);
   return {
-    stops: tr.stops.length - 2,
-    added: tr.stops.filter(s => s.is_new).length,
+    stops: customers.length,
+    added: customers.filter(s => s.is_new).length,
     late: tr.stops.filter(s => s.late).length,
-    roundTrip, last
+    end, endKind: !end ? "open" : (start && metres(start, end) < SAME_LOCATION_M ? "depot" : "place"),
+    last: tr.stops[tr.stops.length - 1]
   };
+}
+
+function endText(f) {
+  return t({ depot: "end_depot", place: "end_connection", open: "end_open" }[f.endKind]);
 }
 
 function overviewPanel() {
@@ -1014,7 +1044,7 @@ function overviewPanel() {
       h("td", {}, hhmm(tr.start)), h("td", {}, hhmm(tr.end)), h("td", {}, `${tr.duration} min`),
       h("td", {}, f.stops), isNew ? null : h("td", {}, f.added || ""),
       h("td", { class: f.late ? "late" : null }, f.late || ""),
-      h("td", {}, f.roundTrip ? t("end_depot") : t("end_connection")),
+      h("td", {}, endText(f)),
       saved ? h("td", {}, c && c.saved ? `−${c.saved} min` : "") : null);
     row.addEventListener("click", () => selectTour(tr.tour_id));
     return row;
@@ -1044,10 +1074,10 @@ function tourPanel(tr, ti) {
          tr.capacity ? loadBar(tr.max_load, tr.capacity) : t("items_short"), tr.over_capacity),
     card(t("col_time"), `${hhmm(tr.start)}–${hhmm(tr.end)}`, `${tr.duration} min`),
     card(t("col_stops"), f.stops, f.added && state.plan.mode !== "new" ? t("n_new", { n: f.added }) : ""),
-    card(t("col_tour_end"), f.roundTrip ? t("end_depot") : t("end_connection"),
-         f.roundTrip ? "" : `${hhmm(f.last.arrival)}` +
-           (f.last.tw_end !== null && f.last.tw_end !== undefined ? ` (${t("until")} ${hhmm(f.last.tw_end)})` : ""),
-         f.last.late),
+    card(t("col_tour_end"), endText(f),
+         `${hhmm(f.last.arrival)}` +
+           (f.end && f.end.tw_end !== null && f.end.tw_end !== undefined ? ` (${t("until")} ${hhmm(f.end.tw_end)})` : ""),
+         f.end && f.end.late),
   ];
   if (Object.keys(tr.quantities || {}).length)
     cards.push(card(t("products"), quantityText(tr.quantities) || "0", `${tr.items || 0} ${t("items_short")}`));
@@ -1056,8 +1086,8 @@ function tourPanel(tr, ti) {
 
   let number = 0;
   const rows = tr.stops.map((s, k) => {
-    const depot = (k === 0 || k === tr.stops.length - 1) && !s.is_new;
-    const label = depot ? (f.roundTrip ? "D" : (k === 0 ? "S" : "E")) : String(++number);
+    const depot = !!s.role;
+    const label = depot ? roleLabel(tr, s) : String(++number);
     const marks = [];
     if (showNew(s)) marks.push(h("span", { class: "tag new" },
       t("new") + (state.deltas[s.stop_id] !== undefined && !state.manual.has(s.stop_id)

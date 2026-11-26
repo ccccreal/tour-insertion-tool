@@ -23,9 +23,11 @@ def forward_pass(tour: Tour, model: TravelModel,
                  start_time: int | None = None) -> Schedule:
     """Schedule of `tour`.
 
-    start_time   when the tour starts at its first stop. None: the first
-                 stop's tw_start, or 0 if it has none.
+    start_time   when the tour starts at its first stop. None: tour.start,
+                 else the first stop's tw_start, else 0.
     """
+    if start_time is None:
+        start_time = tour.start
     times: list[ScheduledStop] = []
     t = 0
     previous = None

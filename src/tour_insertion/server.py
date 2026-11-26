@@ -75,6 +75,15 @@ EXAMPLES = {
     "lyon": ("lyon/tours.csv", "lyon/orders.csv"),
     "paris": ("paris/tours_paris_2.csv", "paris/orders_paris_2.csv"),
 }
+#: Where the example tours start and end (set in the page with the example)
+EXAMPLE_DEPOTS = {
+    "winterthur": "47.5000, 8.7236",
+    "zuerich": "47.3779, 8.5403",
+    "lyon": "Place Charles Béraudier, 69003 Lyon",
+    "paris": "1 Bd du Palais, 75004 Paris",
+    "praxen": "47.3779, 8.5403",
+    "standorte": "47.3779, 8.5403",
+}
 TEMPLATES = {"tours": "lyon/tours.csv", "orders": "lyon/orders.csv"}
 #: Stop lists for planning from scratch: examples/<name>/stops.xlsx + template.json
 PLAN_EXAMPLES = ("praxen", "standorte")
@@ -135,7 +144,8 @@ def stop_from_json(d: dict) -> Stop:
                     items=None if d.get("items") in (None, "") else int(d["items"]),
                     kind=parse_kind(d.get("kind")), name=str(d.get("name") or ""),
                     quantities=tuple((str(k), int(v)) for k, v in (d.get("quantities") or {}).items()),
-                    info=tuple((str(k), str(v)) for k, v in (d.get("info") or {}).items()))
+                    info=tuple((str(k), str(v)) for k, v in (d.get("info") or {}).items()),
+                    role=str(d.get("role") or "") if d.get("role") in ("start", "end") else "")
     except (KeyError, TypeError, ValueError) as error:
         raise InputError(f"bad stop {d!r}: {error}") from error
 
@@ -149,7 +159,8 @@ def tours_from_json(data: list | None, settings: Settings
         stops = tuple(stop_from_json(d) for d in t.get("stops") or [])
         moved |= {d["stop_id"] for d in t.get("stops") or [] if d.get("moved")}
         tour_id = str(t.get("tour_id"))
-        tours[tour_id] = Tour(tour_id, stops, vehicle=str(t.get("vehicle") or ""))
+        tours[tour_id] = Tour(tour_id, stops, vehicle=str(t.get("vehicle") or ""),
+                              start=None if settings.start_at_depot else settings.day_start)
     tours, model, models = apply_vehicles(tours, settings)
     return tours, moved, model, models
 
@@ -176,7 +187,7 @@ def schedule_json(s: Schedule, tolerance_min: int,
             "tw_start": t.stop.tw_start, "tw_end": t.stop.tw_end,
             "service_min": t.stop.service_min, "is_new": t.stop.is_new,
             "items": t.stop.items, "kind": t.stop.kind, "load": load,
-            "name": t.stop.name, "quantities": dict(t.stop.quantities),
+            "name": t.stop.name, "quantities": dict(t.stop.quantities), "role": t.stop.role,
             "info": dict(t.stop.info),
             "arrival": t.arrival, "departure": t.departure,
             "arrival_hhmm": format_time(t.arrival), "slack": t.slack,
@@ -322,6 +333,10 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
         return FileResponse(ROOT / "examples" / TEMPLATES[kind], media_type="text/csv",
                             filename=f"{kind}_template.csv")
 
+    @app.get("/api/example-depots")
+    def example_depots():
+        return EXAMPLE_DEPOTS
+
     @app.get("/api/plan-examples")
     def plan_examples():
         out = []
@@ -423,8 +438,7 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
         candidates = {only: tours[only]} if only in tours else tours
         try:
             result = insert_orders(candidates, [new_stop], model, models=models,
-                                   fixed_first=not s.open_start, fixed_last=not s.open_end,
-                                   tolerance_min=s.tolerance_min)
+                                   **s.insertion_options)
         except ValueError as error:                   # e.g. id already in a tour
             raise InputError(str(error)) from error
         if not result.inserted:

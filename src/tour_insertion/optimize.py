@@ -60,6 +60,7 @@ def improve_tour(tour: Tour, model: TravelModel, *, fixed_first: bool = True,
     # tuples of indices into `stops`; evaluate() is forward_pass() +
     # check() on these tables (same rules, much faster).
     exempt = late_stops(forward_pass(tour, model, start_time), tolerance_min)
+    start = start_time if start_time is not None else tour.start
     minutes = [[model.travel_min(a.point, b.point) for b in stops] for a in stops]
     exact = [[model.travel_exact(a.point, b.point) for b in stops] for a in stops]
     limit = [None if s.tw_end is None or s.stop_id in exempt
@@ -74,7 +75,7 @@ def improve_tour(tour: Tour, model: TravelModel, *, fixed_first: bool = True,
     def evaluate(order: tuple[int, ...]) -> float | None:
         """Duration (+ tiny travel tie-break), or None if infeasible."""
         first = stops[order[0]]
-        t = start_time if start_time is not None else (first.tw_start or 0)
+        t = start if start is not None else (first.tw_start or 0)
         begin, prev, travel, load = None, None, 0.0, first_load
         for i in order:
             if room is not None:

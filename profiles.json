@@ -5,8 +5,8 @@
     "detour_factor": 1.35,
     "service_min": 3,
     "tolerance_min": 0,
-    "open_start": false,
-    "open_end": false,
+    "start_at_depot": true,
+    "end_mode": "depot",
     "min_score": 0.5,
     "optimize": false
   },
@@ -15,8 +15,8 @@
     "detour_factor": 1.35,
     "service_min": 3,
     "tolerance_min": 0,
-    "open_start": false,
-    "open_end": false,
+    "start_at_depot": true,
+    "end_mode": "depot",
     "min_score": 0.5,
     "optimize": false
   },
@@ -25,8 +25,8 @@
     "detour_factor": 1.35,
     "service_min": 3,
     "tolerance_min": 0,
-    "open_start": false,
-    "open_end": false,
+    "start_at_depot": true,
+    "end_mode": "depot",
     "min_score": 0.5,
     "optimize": false
   }
