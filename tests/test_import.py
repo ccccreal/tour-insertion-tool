@@ -99,14 +99,19 @@ def test_plan_from_scratch_respects_capacity_and_return_time():
         assert s.tour.capacity is None or max_load(s.tour.stops) <= s.tour.capacity
         assert s.times[-1].arrival <= 660
         assert len(s.tour) > 2                                  # unused vehicles left out
-        assert s.tour.stops[0].stop_id.endswith(" start")
+        assert s.tour.stops[0].stop_id == f"{s.tour.tour_id} start"
+    ids = sorted(s.tour.tour_id for s in result.schedules)
+    for vehicle in ("Lastenvelo", "Auto"):           # numbered without gaps
+        numbers = [int(i.rsplit(" ", 1)[1]) for i in ids if i.startswith(vehicle)]
+        assert numbers == list(range(1, len(numbers) + 1))
 
 
 def test_plan_needs_depot_and_vehicles():
     with pytest.raises(InputError, match="depot"):
         plan_new([], Settings(), FakeGeocoder())
     with pytest.raises(InputError, match="vehicle"):
-        plan_new([], Settings(depot="47.3, 8.5"), FakeGeocoder())
+        plan_new([], Settings(depot="47.3, 8.5", vehicles={"Velo": {"capacity": 5}}),
+                 FakeGeocoder())
 
 
 def test_cli_plans_from_an_excel_file(tmp_path):

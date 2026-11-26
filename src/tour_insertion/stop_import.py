@@ -229,7 +229,7 @@ def inspect(data: bytes, filename: str) -> dict:
     if not tables:
         raise ValueError(f"{filename}: no data found")
     return {"sheets": [{"name": t.name, "headers": t.headers, "rows": len(t.rows),
-                        "preview": t.preview()} for t in tables],
+                        "preview": t.preview(), "guess": guess_template(t)} for t in tables],
             "guess": guess_template(tables[0])}
 
 

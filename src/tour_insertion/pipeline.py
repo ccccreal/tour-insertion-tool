@@ -43,9 +43,10 @@ class InputError(ValueError):
 #: Vehicle types used when nothing else is given. Assumptions: a cargo bike
 #: with trailer carries 10 items at 15 km/h (crow-fly x detour), a car 40
 #: items (the cautious end of "40-50") at 20 km/h in town incl. parking.
+#: "count" (vehicles available) is only used when planning from scratch.
 DEFAULT_VEHICLES = {
-    "Lastenvelo": {"capacity": 10, "speed_kmh": 15},
-    "Auto": {"capacity": 40, "speed_kmh": 20},
+    "Lastenvelo": {"capacity": 10, "speed_kmh": 15, "count": 4},
+    "Auto": {"capacity": 40, "speed_kmh": 20, "count": 1},
 }
 
 
@@ -339,9 +340,23 @@ def plan_new(order_rows: list[dict], settings: Settings, geocoder: Geocoder | No
         result = insert_orders(tours, orders, model, models=models, **options)
     except ValueError as error:
         raise InputError(str(error)) from error
-    final = {t: improve_tour(tour, models.get(t, model), **options)
-             for t, tour in result.tours.items() if len(tour) > 2}
-    schedules = [forward_pass(final[t], models.get(t, model)) for t in final]
-    return RunResult(final, orders, result.inserted,
+    used = {t: improve_tour(tour, models.get(t, model), **options)
+            for t, tour in result.tours.items() if len(tour) > 2}
+    # number the used vehicles 1, 2, 3 per type (no gaps for unused ones)
+    final, new_models, seen = {}, {}, defaultdict(int)
+    for old_id, tour in used.items():
+        seen[tour.vehicle] += 1
+        new_id = f"{tour.vehicle} {seen[tour.vehicle]}"
+        stops = (replace(tour.stops[0], stop_id=f"{new_id} start"), *tour.stops[1:-1],
+                 replace(tour.stops[-1], stop_id=f"{new_id} end"))
+        final[new_id] = replace(tour, tour_id=new_id, stops=stops)
+        if old_id in models:
+            new_models[new_id] = models[old_id]
+    schedules = [forward_pass(final[t], new_models.get(t, model)) for t in final]
+    renamed = {o.tour_id: o.tour_id for o in result.inserted}
+    for (old_id, tour), new_id in zip(used.items(), final):
+        renamed[old_id] = new_id
+    inserted = [replace(o, tour_id=renamed[o.tour_id]) for o in result.inserted]
+    return RunResult(final, orders, inserted,
                      missing + geo_unplaced + result.unplaced, schedules,
                      ([depot_result] if depot_result else []) + geo_results)

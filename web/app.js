@@ -13,7 +13,12 @@ const COLOURS = ["#1f77b4", "#ff7f0e", "#2ca02c", "#9467bd", "#17becf", "#8c564b
 const SNAP_PX = 40;           // how close to a tour line a stop must be dropped
 
 const state = {
-  profiles: {}, examples: [], plan: null, settings: null,
+  profiles: {}, examples: [], planExamples: [], plan: null, settings: null,
+  mode: "new",                // "new" = plan from a list of stops, "insert" = add to tours
+  file: null,                 // stops/orders file as chosen (File), for the column mapping
+  inspected: null,            // /api/inspect answer for that file
+  sheet: 0, roles: {},        // column -> role ("address", "postcode", ...)
+  mapOptions: { kind: "drop", country: "", default_items: 1 },
   tours: [], unplaced: [], skipped: [], geocoding: [], changes: [], csv: {},
   deltas: {}, manual: new Set(), placed: new Set(), hidden: new Set(), history: [],
   placing: null,              // {kind: "unplaced"|"skipped", index} while waiting for a map click
@@ -66,7 +71,7 @@ async function init() {
 
   $("language").addEventListener("change", () => {
     LANG = $("language").value; store("lang", LANG);
-    applyTexts(); fillSources(); $("optimize-help").title = t("optimize_help");
+    applyTexts(); modeTexts(); fillSources(); renderMapping(); $("optimize-help").title = t("optimize_help");
     if (state.plan) render();
   });
   $("optimize-help").title = t("optimize_help");
@@ -75,17 +80,40 @@ async function init() {
   $("run").addEventListener("click", runPlan);
   $("undo").addEventListener("click", undo);
   $("add-vehicle").addEventListener("click", () => $("vehicles").append(vehicleRow("", {})));
+  document.querySelectorAll("input[name=mode]").forEach(r =>
+    r.addEventListener("change", () => setMode(r.value)));
+  $("orders-file").addEventListener("change", () => chooseFile($("orders-file").files[0] || null));
   document.addEventListener("keydown", e => { if (e.key === "Escape" && state.placing) stopPlacing(); });
 
   try {
     state.profiles = await (await fetch("api/profiles")).json();
     state.examples = await (await fetch("api/examples")).json();
+    state.planExamples = await (await fetch("api/plan-examples")).json();
   } catch (e) {
     showError("Server not reachable: " + e);
   }
   $("profile").replaceChildren(...Object.keys(state.profiles).map(n => h("option", { value: n }, n)));
   applyProfile(Object.keys(state.profiles)[0]);
+  setMode(load("mode") === "insert" ? "insert" : "new");
+}
+
+// Two ways to work: plan tours from a list of stops, or add new orders to
+// tours planned the evening before. The page shows only what the mode needs
+// (elements with class only-new / only-insert).
+function modeTexts() {
+  $("intro").textContent = t(state.mode === "new" ? "intro_new" : "intro");
+  $("run").textContent = t(state.mode === "new" ? "run_new" : "run");
+}
+
+function setMode(mode) {
+  state.mode = mode;
+  store("mode", mode);
+  document.body.classList.toggle("mode-new", mode === "new");
+  document.body.classList.toggle("mode-insert", mode === "insert");
+  document.querySelector(`input[name=mode][value=${mode}]`).checked = true;
+  modeTexts();
   fillSources();
+  chooseFile($("orders-file").files[0] || null);
 }
 
 function selectedSource() {
@@ -96,16 +124,194 @@ function selectedSource() {
 // Radio buttons: own files, then one per example data set
 function fillSources() {
   const current = selectedSource();
-  const options = [["upload", t("source_upload")], ...state.examples.map(n => [n, t("ex_" + n)])];
+  const examples = state.mode === "new"
+    ? state.planExamples.map(e => ["plan:" + e.name, t("ex_" + e.name)])
+    : state.examples.map(n => [n, t("ex_" + n)]);
+  const options = [["upload", t("source_upload")], ...examples];
   $("sources").replaceChildren(...options.map(([value, text]) => {
     const radio = h("input", { type: "radio", name: "source", value });
     radio.checked = value === current;
-    radio.addEventListener("change", () => { $("upload-box").hidden = selectedSource() !== "upload"; });
+    radio.addEventListener("change", sourceChanged);
     return h("label", {}, radio, text);
   }));
   if (!document.querySelector("input[name=source]:checked"))
     document.querySelector("input[name=source]").checked = true;
   $("upload-box").hidden = selectedSource() !== "upload";
+}
+
+async function sourceChanged() {
+  const source = selectedSource();
+  $("upload-box").hidden = source !== "upload";
+  if (source.startsWith("plan:")) {                    // example stop list + its template
+    const name = source.slice(5);
+    const blob = await (await fetch(`api/plan-examples/${name}/stops`)).blob();
+    const example = state.planExamples.find(e => e.name === name);
+    await chooseFile(new File([blob], `${name}.xlsx`), example && example.template);
+    if (!$("depot").value.trim()) $("depot").value = "Bahnhofplatz 1, 8001 Zürich";
+  } else {
+    chooseFile(source === "upload" ? ($("orders-file").files[0] || null) : null);
+  }
+}
+
+// --------------------------------------------------------------------------
+// Column mapping ("template") for stop lists in any layout, e.g. Excel
+// --------------------------------------------------------------------------
+
+const ROLES = ["", "address", "postcode", "city", "id", "name", "quantity", "info"];
+const STANDARD = ["order_id", "address"];        // a CSV with these needs no mapping
+
+function savedTemplates() {
+  try { return JSON.parse(load("templates") || "{}"); } catch (e) { return {}; }
+}
+
+async function chooseFile(file, template) {
+  state.file = file; state.inspected = null;
+  if (!file) { renderMapping(); return; }
+  const form = new FormData();
+  form.append("file", file);
+  try {
+    const response = await fetch("api/inspect", { method: "POST", body: form });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || response.status);
+    state.inspected = data;
+  } catch (e) {
+    showError(t("error") + "\n" + e); renderMapping(); return;
+  }
+  showError("");
+  const sheets = state.inspected.sheets;
+  const plainCsv = !/\.xls[xm]?$/i.test(file.name) &&
+    STANDARD.every(c => sheets[0].headers.includes(c));
+  state.needsMapping = state.mode === "new" || !plainCsv;
+  state.sheet = 0;
+  applyTemplate(template || sheets[0].guess);
+  renderMapping();
+}
+
+function applyTemplate(tpl) {
+  const sheets = state.inspected.sheets;
+  const i = sheets.findIndex(sh => sh.name === tpl.sheet);
+  if (i >= 0) state.sheet = i;
+  const headers = sheets[state.sheet].headers;
+  const roles = {};
+  const set = (cols, role) => (Array.isArray(cols) ? cols : [cols]).forEach(c => {
+    if (c && headers.includes(c) && !roles[c]) roles[c] = role; });
+  set(tpl.address, "address"); set(tpl.postcode, "postcode"); set(tpl.city, "city");
+  set(tpl.id, "id"); set(tpl.name_columns, "name"); set(tpl.quantities, "quantity");
+  set(tpl.info, "info");
+  state.roles = roles;
+  state.mapOptions = { kind: tpl.kind || "drop", country: tpl.country || "",
+                       default_items: tpl.default_items ?? 1 };
+  const wanted = [tpl.address, tpl.postcode, tpl.city, tpl.id, tpl.name_columns, tpl.quantities, tpl.info]
+    .flat().filter(Boolean);
+  state.mappingMissing = wanted.filter(c => !headers.includes(c));
+}
+
+function currentTemplate() {
+  const headers = state.inspected.sheets[state.sheet].headers;
+  const by = role => headers.filter(c => state.roles[c] === role);
+  return { sheet: state.inspected.sheets[state.sheet].name, address: by("address"),
+           postcode: by("postcode")[0] || "", city: by("city")[0] || "", id: by("id")[0] || "",
+           name_columns: by("name"), quantities: by("quantity"), info: by("info"),
+           ...state.mapOptions };
+}
+
+// What the first data row becomes with the current mapping (like the server)
+function sampleStop() {
+  const sheet = state.inspected.sheets[state.sheet];
+  const tpl = currentTemplate();
+  const row = sheet.preview.find(r => r.some(Boolean));
+  if (!row) return "";
+  const v = c => row[sheet.headers.indexOf(c)] || "";
+  const street = tpl.address.map(v).filter(Boolean).join(", ");
+  const place = [v(tpl.postcode), v(tpl.city)].filter(Boolean).join(" ");
+  const address = [street, place].filter(Boolean).join(", ");
+  const items = tpl.quantities.length
+    ? tpl.quantities.reduce((n, c) => n + (parseInt(v(c), 10) || 0), 0) : tpl.default_items;
+  const name = tpl.name_columns.map(v).filter(Boolean).join(" ");
+  return `${name ? name + " – " : ""}${address || "?"} · ${items} ${t("items_short")}`;
+}
+
+function renderMapping() {
+  const box = $("mapping");
+  if (!state.inspected || !state.needsMapping) { box.hidden = true; box.replaceChildren(); return; }
+  box.hidden = false;
+  const sheets = state.inspected.sheets, sheet = sheets[state.sheet];
+
+  // templates: guessed, built-in (examples), saved in this browser
+  const saved = savedTemplates();
+  const choose = h("select", {}, h("option", { value: "" }, t("tpl_choose")),
+    h("option", { value: "guess" }, t("tpl_guess")),
+    ...state.planExamples.map(e => h("option", { value: "ex:" + e.name }, e.template.title || e.name)),
+    ...Object.keys(saved).map(n => h("option", { value: "saved:" + n }, "★ " + n)));
+  choose.addEventListener("change", () => {
+    const v = choose.value;
+    if (v === "guess") applyTemplate(sheet.guess);
+    else if (v.startsWith("ex:")) applyTemplate(state.planExamples.find(e => "ex:" + e.name === v).template);
+    else if (v.startsWith("saved:")) applyTemplate(saved[v.slice(6)]);
+    renderMapping();
+  });
+  const nameInput = h("input", { type: "text", placeholder: t("tpl_name") });
+  const save = h("button", { type: "button", class: "small-button" }, t("tpl_save"));
+  save.addEventListener("click", () => {
+    const n = nameInput.value.trim();
+    if (!n) { nameInput.focus(); return; }
+    const all = savedTemplates(); all[n] = { ...currentTemplate(), title: n };
+    store("templates", JSON.stringify(all));
+    toast(t("tpl_saved", { name: n }));
+    renderMapping();
+  });
+
+  const sheetSelect = h("select", {}, ...sheets.map((sh, i) =>
+    h("option", { value: String(i), selected: i === state.sheet ? "selected" : null }, `${sh.name} (${sh.rows})`)));
+  sheetSelect.addEventListener("change", () => {
+    state.sheet = Number(sheetSelect.value);
+    applyTemplate(state.inspected.sheets[state.sheet].guess); renderMapping();
+  });
+
+  const rows = sheet.headers.map((col, ci) => {
+    const select = h("select", {}, ...ROLES.map(r =>
+      h("option", { value: r, selected: (state.roles[col] || "") === r ? "selected" : null }, t("role_col_" + (r || "none")))));
+    select.addEventListener("change", () => {
+      if (select.value) state.roles[col] = select.value; else delete state.roles[col];
+      if (["postcode", "city", "id"].includes(select.value))       // only one column each
+        for (const other of sheet.headers) if (other !== col && state.roles[other] === select.value) delete state.roles[other];
+      renderMapping();
+    });
+    const examples = sheet.preview.map(r => r[ci]).filter(Boolean).slice(0, 3)
+      .map(x => x.length > 40 ? x.slice(0, 38) + "…" : x).join(" · ");
+    return h("tr", { class: state.roles[col] ? "used" : null },
+      h("td", {}, h("b", {}, col)), h("td", { class: "small muted" }, examples), h("td", {}, select));
+  });
+
+  const opt = state.mapOptions;
+  const kind = h("select", {}, h("option", { value: "drop" }, t("drop")), h("option", { value: "pickup" }, t("pickup")));
+  kind.value = opt.kind;
+  kind.addEventListener("change", () => { opt.kind = kind.value; });
+  const country = h("select", {}, h("option", { value: "" }, t("country_auto")),
+    h("option", { value: "CH" }, "CH"), h("option", { value: "FR" }, "FR"));
+  country.value = opt.country;
+  country.addEventListener("change", () => { opt.country = country.value; });
+  const items = h("input", { type: "number", min: "0", step: "1", value: String(opt.default_items) });
+  items.addEventListener("change", () => { opt.default_items = Math.max(0, parseInt(items.value, 10) || 0); renderMapping(); });
+  const hasQty = Object.values(state.roles).includes("quantity");
+  const hasAddress = Object.values(state.roles).includes("address");
+
+  box.replaceChildren(...[
+    h("div", { class: "mapping-head" }, h("h3", {}, t("mapping_title")),
+      h("span", { class: "small muted" }, state.file ? state.file.name : "")),
+    h("p", { class: "small muted" }, t("mapping_help")),
+    h("div", { class: "mapping-bar" },
+      h("label", {}, h("span", {}, t("tpl_label")), choose),
+      sheets.length > 1 ? h("label", {}, h("span", {}, t("sheet")), sheetSelect) : null,
+      h("label", {}, h("span", {}, t("col_type")), kind),
+      h("label", {}, h("span", {}, t("country")), country),
+      hasQty ? null : h("label", {}, h("span", {}, t("items_per_stop")), items)),
+    state.mappingMissing && state.mappingMissing.length
+      ? h("div", { class: "warning" }, t("tpl_missing", { cols: state.mappingMissing.join(", ") })) : null,
+    table([t("map_column"), t("map_examples"), t("map_use")], rows),
+    h("p", { class: hasAddress ? "sample" : "sample bad" },
+      hasAddress ? t("map_sample", { stop: sampleStop() }) : t("map_need_address")),
+    h("div", { class: "mapping-bar" }, nameInput, save)].filter(Boolean));
 }
 
 function applyProfile(name) {
@@ -120,6 +326,9 @@ function applyProfile(name) {
   $("open-end").checked = !!p.open_end;
   $("min-score").value = p.min_score;
   renderVehicles(p.vehicles || {});
+  if (p.depot) $("depot").value = p.depot;
+  if (p.day_start !== undefined) $("day-start").value = hhmm(p.day_start);
+  if (p.day_end !== undefined && p.day_end !== null) $("day-end").value = hhmm(p.day_end);
 }
 
 // Vehicle types: name, capacity (items), speed (km/h). A tour uses the
@@ -129,7 +338,9 @@ function vehicleRow(name, spec) {
     class: cls, type, value: value ?? "", min: type === "number" ? "0" : null,
     step: cls === "v-speed" ? "0.5" : (type === "number" ? "1" : null) }));
   const remove = h("button", { type: "button", class: "small-button", title: t("v_remove") }, "✕");
-  const row = h("tr", {}, cell("v-name", name, "text"), cell("v-capacity", spec.capacity, "number"),
+  const count = cell("v-count", spec.count ?? 0, "number");
+  count.classList.add("only-new");
+  const row = h("tr", {}, cell("v-name", name, "text"), count, cell("v-capacity", spec.capacity, "number"),
                 cell("v-speed", spec.speed_kmh, "number"), h("td", {}, remove));
   remove.addEventListener("click", () => row.remove());
   return row;
@@ -147,7 +358,8 @@ function readVehicles() {
     const capacity = row.querySelector(".v-capacity").value.trim();
     const speed = row.querySelector(".v-speed").value.trim();
     out[name] = { capacity: capacity === "" ? null : Math.round(Number(capacity)),
-                  speed_kmh: speed === "" ? null : Number(speed) };
+                  speed_kmh: speed === "" ? null : Number(speed),
+                  count: Math.max(0, Math.round(Number(row.querySelector(".v-count").value) || 0)) };
   }
   return out;
 }
@@ -162,8 +374,16 @@ function readSettings() {
     open_start: $("open-start").checked,
     open_end: $("open-end").checked,
     min_score: Number($("min-score").value),
-    vehicles: readVehicles()
+    vehicles: readVehicles(),
+    depot: $("depot").value.trim(),
+    day_start: minutes($("day-start").value) ?? 480,
+    day_end: minutes($("day-end").value)
   };
+}
+
+function minutes(hhmmText) {           // "08:30" -> 510, "" -> null
+  const m = /^(\d{1,2}):(\d{2})$/.exec((hhmmText || "").trim());
+  return m ? Number(m[1]) * 60 + Number(m[2]) : null;
 }
 
 function showError(text) { $("error").textContent = text; $("error").hidden = !text; }
@@ -173,7 +393,12 @@ async function runPlan() {
   const form = new FormData();
   const source = selectedSource();
   try {
-    if (source !== "upload") {
+    if (state.mode === "new") {
+      if (!state.file || !state.inspected) { showError(t("need_stops")); return; }
+      if (!currentTemplate().address.length) { showError(t("map_need_address")); return; }
+      form.append("orders", state.file);
+      form.append("template", JSON.stringify(currentTemplate()));
+    } else if (source !== "upload") {
       const name = source;
       for (const kind of ["tours", "orders"]) {
         const text = await (await fetch(`api/examples/${name}/${kind}`)).text();
@@ -183,6 +408,7 @@ async function runPlan() {
       const tours = $("tours-file").files[0], orders = $("orders-file").files[0];
       if (!tours || !orders) { showError(t("need_files")); return; }
       form.append("tours", tours); form.append("orders", orders);
+      if (state.needsMapping && state.inspected) form.append("template", JSON.stringify(currentTemplate()));
     }
     form.append("settings", JSON.stringify(readSettings()));
     $("run").disabled = true; $("run").textContent = t("running");
@@ -193,7 +419,7 @@ async function runPlan() {
   } catch (e) {
     showError(t("error") + "\n" + e);
   } finally {
-    $("run").disabled = false; $("run").textContent = t("run");
+    $("run").disabled = false; modeTexts();
   }
 }
 
@@ -254,6 +480,14 @@ function hasPickups() {
          state.unplaced.some(u => u.kind === "pickup");
 }
 
+// When planning from scratch every stop is "new": no special marking then.
+function showNew(s) { return s.is_new && !(state.plan && state.plan.mode === "new"); }
+
+// "14 × Box 50er · 13 × Box 25er"
+function quantityText(q) {
+  return Object.entries(q || {}).filter(([, n]) => n).map(([k, n]) => `${n} × ${k}`).join(" · ");
+}
+
 function kindText(kind) { return kind === "pickup" ? t("pickup") : t("drop"); }
 
 // "Lastenvelo 8/10" or "15 Items" when the tour has no capacity
@@ -264,12 +498,16 @@ function loadText(tour) {
 }
 
 function popupHtml(tour, number, s) {
-  const lines = [`<b>${esc(s.stop_id)}</b>${s.is_new ? " (" + esc(t("new")) + ")" : ""}`,
+  const lines = [`<b>${esc(s.name || s.stop_id)}</b>${s.name ? ` <span style="color:#888">${esc(s.stop_id)}</span>` : ""}` +
+                 `${showNew(s) ? " (" + esc(t("new")) + ")" : ""}`,
     esc(s.address),
     `${esc(t("col_tour"))} ${esc(tour.tour_id)}, ${esc(t("stop_word"))} ${number}`,
     `${esc(t("col_arrival"))} ${hhmm(s.arrival)}`];
   if (hasPickups()) lines.push(esc(kindText(s.kind)));
-  if (s.items !== null && s.items !== undefined) lines.push(`${esc(t("col_items"))}: ${s.items}`);
+  if (s.items !== null && s.items !== undefined)
+    lines.push(`${esc(t("col_items"))}: ${s.items}` + (quantityText(s.quantities) ? ` (${esc(quantityText(s.quantities))})` : ""));
+  for (const [k, v] of Object.entries(s.info || {}))
+    lines.push(`<span style="color:#666">${esc(k)}:</span> ${esc(v).replace(/\n/g, "<br>")}`);
   if (tour.capacity !== null && tour.capacity !== undefined)
     lines.push(`${esc(t("on_board"))}: ${s.load}/${tour.capacity}`);
   if (s.tw_start !== null || s.tw_end !== null)
@@ -391,7 +629,7 @@ function renderMap() {
     let marker;
     if (e.kind === "tour") {
       marker = L.marker(e.pos, {
-        icon: stopIcon(String(e.number), e.fill, e.s.is_new, false, e.s.late, e.s.kind),
+        icon: stopIcon(String(e.number), e.fill, showNew(e.s), false, e.s.late, e.s.kind),
         draggable: true, title: `${e.tour.tour_id} #${e.number}: ${e.s.stop_id}`,
         opacity: dim(e.tour.tour_id) ? 0.3 : 1,
         zIndexOffset: (e.s.is_new ? 500 : 0) + (state.selected === e.tour.tour_id ? 1500 : 0)
@@ -650,7 +888,8 @@ function lateCount() {
 function renderMetrics() {
   const placed = state.tours.reduce((n, tr) => n + tr.stops.filter(s => s.is_new).length, 0);
   const late = lateCount();
-  const cards = [["m_tours", state.tours.length], ["m_orders", state.plan.n_orders],
+  const cards = [["m_tours", state.tours.length],
+                 [state.plan.mode === "new" ? "m_stops" : "m_orders", state.plan.n_orders],
                  ["m_placed", placed], ["m_unplaced", state.unplaced.length], ["m_late", late]];
   $("metrics").replaceChildren(...cards.map(([key, value]) =>
     h("div", { class: "metric" + (key === "m_late" && late ? " bad" : "") },
@@ -678,9 +917,11 @@ function renderOpen() {
     return;
   }
   if (state.unplaced.length) {
-    parts.push(h("h3", {}, `${t("unplaced")} (${state.unplaced.length})`),
-      table([t("col_order"), t("col_address"), t("col_type"), t("col_items"), t("col_reason"), ""],
-        state.unplaced.map((u, j) => h("tr", {}, h("td", {}, u.order_id), h("td", {}, u.address),
+    const isNew = state.plan.mode === "new";
+    parts.push(h("h3", {}, `${t(isNew ? "unplaced_stops" : "unplaced")} (${state.unplaced.length})`),
+      table([t(isNew ? "col_stop" : "col_order"), t("col_address"), t("col_type"), t("col_items"), t("col_reason"), ""],
+        state.unplaced.map((u, j) => h("tr", {}, h("td", {}, u.name ? h("b", {}, u.name) : null, u.name ? " " : null, u.order_id),
+          h("td", {}, u.address || "–"),
           h("td", {}, kindText(u.kind)), h("td", {}, u.items ?? ""), h("td", {}, t(u.reason)),
           h("td", {}, u.lat === null || u.lat === undefined ? placeButton("unplaced", j) : null)))),
       state.unplaced.some(u => u.lat !== null && u.lat !== undefined)
@@ -755,25 +996,39 @@ function tourFacts(tr) {
 }
 
 function overviewPanel() {
+  const isNew = state.plan.mode === "new";
+  const products = [...new Set(state.tours.flatMap(tr => Object.keys(tr.quantities || {})))];
+  const saved = state.changes.length > 0;
+  const total = { stops: 0, added: 0, late: 0, items: 0, q: {} };
   const rows = state.tours.map((tr, ti) => {
     const f = tourFacts(tr), c = changeOf(tr.tour_id);
+    total.stops += f.stops; total.added += f.added; total.late += f.late; total.items += tr.items || 0;
+    for (const p of products) total.q[p] = (total.q[p] || 0) + ((tr.quantities || {})[p] || 0);
     const row = h("tr", { class: "clickable" },
       h("td", {}, h("span", { class: "dot", style: `background:${colour(ti)}` }), " ", tr.tour_id),
       h("td", {}, tr.vehicle || "–"),
       h("td", { class: tr.over_capacity ? "late" : null },
         tr.capacity !== null && tr.capacity !== undefined ? `${tr.max_load}/${tr.capacity}`
                                                          : `${tr.items || 0} ${t("items_short")}`),
+      ...products.map(p => h("td", {}, (tr.quantities || {})[p] || 0)),
       h("td", {}, hhmm(tr.start)), h("td", {}, hhmm(tr.end)), h("td", {}, `${tr.duration} min`),
-      h("td", {}, f.stops), h("td", {}, f.added || ""),
+      h("td", {}, f.stops), isNew ? null : h("td", {}, f.added || ""),
       h("td", { class: f.late ? "late" : null }, f.late || ""),
       h("td", {}, f.roundTrip ? t("end_depot") : t("end_connection")),
-      h("td", {}, c && c.saved ? `−${c.saved} min` : ""));
+      saved ? h("td", {}, c && c.saved ? `−${c.saved} min` : "") : null);
     row.addEventListener("click", () => selectTour(tr.tour_id));
     return row;
   });
-  return h("div", { class: "panel" },
-    table([t("col_tour"), t("v_vehicle"), t("col_load"), t("col_start"), t("col_end"), t("col_duration"),
-           t("col_stops"), t("col_new"), t("late"), t("col_tour_end"), t("col_saved")], rows),
+  rows.push(h("tr", { class: "total" }, h("td", {}, t("total")), h("td", {}),
+    h("td", {}, `${total.items} ${t("items_short")}`),
+    ...products.map(p => h("td", {}, total.q[p])),
+    h("td", {}), h("td", {}), h("td", {}), h("td", {}, total.stops),
+    isNew ? null : h("td", {}, total.added || ""), h("td", {}, total.late || ""), h("td", {}),
+    saved ? h("td", {}) : null));
+  const head = [t("col_tour"), t("v_vehicle"), t("col_load"), ...products, t("col_start"), t("col_end"),
+                t("col_duration"), t("col_stops"), isNew ? null : t("col_new"), t("late"),
+                t("col_tour_end"), saved ? t("col_saved") : null].filter(x => x !== null);
+  return h("div", { class: "panel" }, table(head, rows),
     h("p", { class: "small muted" }, t("overview_hint")));
 }
 
@@ -788,12 +1043,14 @@ function tourPanel(tr, ti) {
     card(t("col_load"), tr.capacity !== null && tr.capacity !== undefined ? `${tr.max_load}/${tr.capacity}` : `${tr.items || 0}`,
          tr.capacity ? loadBar(tr.max_load, tr.capacity) : t("items_short"), tr.over_capacity),
     card(t("col_time"), `${hhmm(tr.start)}–${hhmm(tr.end)}`, `${tr.duration} min`),
-    card(t("col_stops"), f.stops, f.added ? t("n_new", { n: f.added }) : ""),
+    card(t("col_stops"), f.stops, f.added && state.plan.mode !== "new" ? t("n_new", { n: f.added }) : ""),
     card(t("col_tour_end"), f.roundTrip ? t("end_depot") : t("end_connection"),
          f.roundTrip ? "" : `${hhmm(f.last.arrival)}` +
            (f.last.tw_end !== null && f.last.tw_end !== undefined ? ` (${t("until")} ${hhmm(f.last.tw_end)})` : ""),
          f.last.late),
   ];
+  if (Object.keys(tr.quantities || {}).length)
+    cards.push(card(t("products"), quantityText(tr.quantities) || "0", `${tr.items || 0} ${t("items_short")}`));
   if (f.late) cards.push(card(t("late"), f.late, t("stops_late"), true));
   if (c) cards.push(card(t("optimization"), `${c.before} → ${c.after} min`, t("n_moved", { n: c.moved })));
 
@@ -802,7 +1059,7 @@ function tourPanel(tr, ti) {
     const depot = (k === 0 || k === tr.stops.length - 1) && !s.is_new;
     const label = depot ? (f.roundTrip ? "D" : (k === 0 ? "S" : "E")) : String(++number);
     const marks = [];
-    if (s.is_new) marks.push(h("span", { class: "tag new" },
+    if (showNew(s)) marks.push(h("span", { class: "tag new" },
       t("new") + (state.deltas[s.stop_id] !== undefined && !state.manual.has(s.stop_id)
         ? ` +${Math.round(state.deltas[s.stop_id])} min` : "")));
     if (state.placed.has(s.stop_id)) marks.push(h("span", { class: "tag" }, t("placed_short")));
@@ -812,12 +1069,16 @@ function tourPanel(tr, ti) {
     const window_ = (s.tw_start !== null || s.tw_end !== null)
       ? `${hhmm(s.tw_start) || "…"}–${hhmm(s.tw_end) || "…"}` : "";
     const over = tr.capacity !== null && tr.capacity !== undefined && s.load > tr.capacity;
-    const row = h("tr", { class: "clickable" + (s.is_new ? " is-new" : "") },
+    const row = h("tr", { class: "clickable" + (showNew(s) ? " is-new" : "") },
       h("td", {}, h("span", { class: "num" + (depot ? " depot" : "") + (s.kind === "pickup" && !depot ? " pickup" : ""),
                               style: `--c:${colour(ti)}` }, label)),
-      h("td", {}, h("div", {}, s.stop_id), h("div", { class: "small muted" }, s.address)),
+      h("td", {}, h("div", {}, s.name ? h("b", {}, s.name) : null, s.name ? " " : null,
+                     h("span", { class: s.name ? "small muted" : null }, depot ? (s.name || t("depot")) : s.stop_id)),
+        h("div", { class: "small muted" }, s.address),
+        s.info && s.info.floor ? h("div", { class: "small muted" }, s.info.floor) : null),
       h("td", {}, depot ? "" : kindText(s.kind)),
-      h("td", {}, s.items ?? ""),
+      h("td", { title: quantityText(s.quantities) || null }, s.items ?? "",
+        quantityText(s.quantities) ? h("div", { class: "small muted" }, quantityText(s.quantities)) : null),
       h("td", { class: over ? "late" : null },
         tr.capacity !== null && tr.capacity !== undefined ? h("span", {}, loadBar(s.load, tr.capacity), ` ${s.load}`) : s.load),
       h("td", { class: s.late ? "late" : null }, hhmm(s.arrival)),

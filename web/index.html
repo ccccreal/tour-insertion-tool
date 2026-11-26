@@ -22,12 +22,23 @@
       <h2 data-i18n="settings"></h2>
       <label><span data-i18n="profile"></span><select id="profile"></select></label>
 
+      <div class="only-new">
+        <h3 data-i18n="sec_depot"></h3>
+        <label><span data-i18n="depot_label"></span>
+          <input id="depot" type="text" placeholder="Bahnhofplatz 1, 8001 Zürich"></label>
+        <div class="two">
+          <label><span data-i18n="day_start"></span><input id="day-start" type="time" value="08:00"></label>
+          <label><span data-i18n="day_end"></span><input id="day-end" type="time"></label>
+        </div>
+        <p class="small muted" data-i18n="depot_help"></p>
+      </div>
+
       <h3 data-i18n="vehicles"></h3>
       <table class="vehicles">
-        <thead><tr><th data-i18n="v_name"></th><th data-i18n="v_capacity"></th><th data-i18n="v_speed"></th><th></th></tr></thead>
+        <thead><tr><th data-i18n="v_name"></th><th class="only-new" data-i18n="v_count"></th><th data-i18n="v_capacity"></th><th data-i18n="v_speed"></th><th></th></tr></thead>
         <tbody id="vehicles"></tbody>
         <tfoot><tr class="v-default">
-          <td data-i18n="v_default"></td><td class="muted">–</td>
+          <td data-i18n="v_default"></td><td class="only-new"></td><td class="muted">–</td>
           <td><input id="speed" type="number" min="5" max="60" step="0.5"></td><td></td>
         </tr></tfoot>
       </table>
@@ -56,26 +67,36 @@
 
     <main>
       <h1 data-i18n="title"></h1>
-      <p data-i18n="intro"></p>
+      <p id="intro"></p>
+
+      <div class="modes" role="radiogroup">
+        <label class="mode-card"><input type="radio" name="mode" value="new">
+          <span><b data-i18n="mode_new"></b><br><span class="small muted" data-i18n="mode_new_help"></span></span></label>
+        <label class="mode-card"><input type="radio" name="mode" value="insert">
+          <span><b data-i18n="mode_insert"></b><br><span class="small muted" data-i18n="mode_insert_help"></span></span></label>
+      </div>
 
       <p class="label" data-i18n="data"></p>
       <div id="sources" class="sources"></div>
 
       <div id="upload-box">
         <div class="uploads">
-          <label class="upload"><span data-i18n="tours_file"></span>
+          <label class="upload only-insert"><span data-i18n="tours_file"></span>
             <input type="file" id="tours-file" accept=".csv,text/csv"></label>
-          <label class="upload"><span data-i18n="orders_file"></span>
-            <input type="file" id="orders-file" accept=".csv,text/csv"></label>
+          <label class="upload"><span class="only-insert" data-i18n="orders_file"></span>
+            <span class="only-new" data-i18n="stops_file"></span>
+            <input type="file" id="orders-file" accept=".csv,.xlsx,.xlsm,text/csv"></label>
         </div>
-        <details class="box">
+        <details class="box only-insert">
           <summary data-i18n="templates"></summary>
           <p><a href="api/templates/tours" data-i18n="template_tours"></a> ·
              <a href="api/templates/orders" data-i18n="template_orders"></a></p>
         </details>
       </div>
 
-      <button id="run" class="primary" type="button" data-i18n="run"></button>
+      <div id="mapping" class="mapping" hidden></div>
+
+      <button id="run" class="primary" type="button"></button>
       <div id="error" class="error" hidden></div>
 
       <div id="metrics" class="metrics" hidden></div>

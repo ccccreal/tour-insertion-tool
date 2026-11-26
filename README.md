@@ -1,11 +1,18 @@
 # tour-insertion-tool
 
-Insert new orders into delivery tours that were planned the evening before.
+Plan delivery tours from a list of stops, or insert new orders into tours
+that were planned the evening before.
 
-Tours are planned in the evening for the next day. Orders that arrive overnight
-must be added in the morning. This tool puts each new stop at the position in
-an existing tour where it costs the least extra time, while keeping all time
-windows. Existing tours are **not** rearranged, only extended.
+Two ways to work:
+
+- **Plan tours** from a list of stops (e.g. an Excel file in the customer's
+  own layout): the stops are spread over the available vehicles, keeping
+  capacity and the latest return time. See *Planning from a stop list*.
+- **Insert orders**: tours are planned in the evening for the next day,
+  orders that arrive overnight are added in the morning. Each new stop goes
+  to the position in an existing tour where it costs the least extra time,
+  keeping all time windows. Existing tours are **not** rearranged, only
+  extended.
 
 ## Quick start
 
@@ -18,6 +25,10 @@ uv run tour-insert examples/winterthur/tours.csv examples/winterthur/orders.csv 
 
 # online: only addresses, geocoded on the fly
 uv run tour-insert examples/lyon/tours.csv examples/lyon/orders.csv -o out-lyon --map
+
+# plan tours from an Excel stop list (online, geocodes 141 addresses once)
+uv run tour-insert --stops examples/praxen/stops.xlsx --template examples/praxen/template.json \
+    --depot "Bahnhofplatz 1, 8001 Zürich" --fleet Lastenvelo=10 Auto=2 --end 12:00 -o out-plan --map
 ```
 
 Output folder:
@@ -112,6 +123,38 @@ give the last stop its own address and, if it must be reached in time, a
 a round trip is marked **D**; a tour that ends elsewhere has **S** (start)
 and **E** (end), and E turns red when the tour arrives too late.
 Example: tour T2 in `examples/winterthur/`.
+
+## Planning from a stop list
+
+Input: one file with the stops, CSV or Excel (`.xlsx`) in any layout. A
+**template** says what each column means (`stop_import.py`):
+
+| role | meaning |
+|---|---|
+| address | street and number, or the full address; several columns are joined |
+| postcode, city | optional, added to the address |
+| id | unique id (optional; else 001, 002, ...) |
+| name | shown as the stop's name (e.g. practice, location) |
+| quantity | number per product; summed to the stop's items, kept per product for the summary and export |
+| info | passed on unchanged to the export (contact, opening hours, ...) |
+
+Plus for the whole file: drop or pickup, country (or from the postcode),
+items per stop when there is no quantity column. Rows that say "Total" or
+are empty are skipped; floors like "1. Stock" are kept for the driver but
+not sent to the geocoder. In the web page the columns are guessed and shown
+with example values; the mapping can be saved as a template (in the
+browser). Examples with templates: `examples/praxen/`, `examples/standorte/`.
+
+Settings: depot (address or `lat, lon`), start time, latest return
+("back by", optional), and how many vehicles of each type are available.
+
+Method (a simple heuristic, not an optimal plan): every vehicle starts with
+an empty tour depot → depot; all stops are inserted with the same cheapest
+insertion as overnight orders, as long as capacity and return time allow;
+then the order within each tour is improved. Vehicles that get no stop are
+left out. Without a return time, the cheapest plan is usually ONE long tour
+of the fastest vehicle: set "back by" to spread the stops. A real vehicle
+routing solver (e.g. OR-Tools) would find better plans for many stops.
 
 ## Vehicles and capacity
 
@@ -223,6 +266,10 @@ this repository.
   items), T2 a car (40 items) that ends at a railway station by 10:00.
   N3 lies on the bike's route, but the bike is too full, so the car takes
   it; N5 and N6 are pickups; N7 cannot be reached in time on purpose.
+- `examples/praxen/stops.xlsx`: 141 invented practices (Zurich region),
+  street, postcode and city in separate columns, opening hours as info.
+- `examples/standorte/stops.xlsx`: 20 invented locations, address in one
+  column, two products (Box 50er, Box 25er), a total row.
 - `examples/lyon/`: 2 tours, 7 orders, addresses only (needs internet).
   Public places and squares; C6 has no country (guessed from the postal code),
   C7 is a made-up address that must end up in `unplaced.csv`.
