@@ -8,6 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     TOOL_ROOT=/app \
     TOOL_GEOCODE_CACHE=/data/geocode_cache.json \
+    TOOL_CONSENT_LOG=/data/terms_accepted.jsonl \
     HOST=0.0.0.0 \
     PORT=8000
 

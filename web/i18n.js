@@ -268,7 +268,20 @@ const TEXT = {
     de: "{stop} passt in keine Tour. Er bleibt als ✕ auf der Karte und kann von Hand auf eine Tour gezogen werden.",
     fr: "{stop} n'entre dans aucune tournée. Il reste en ✕ sur la carte et peut être glissé sur une tournée.",
     en: "{stop} fits no tour. It stays as ✕ on the map and can be dragged onto a tour by hand."
-  }
+  },
+  // terms of use (only when the server has them configured)
+  terms_title: { de: "Nutzungsbedingungen", fr: "Conditions d'utilisation", en: "Terms of use" },
+  terms_text: {
+    de: "Bevor du das Tool nutzt, lies bitte die Nutzungsbedingungen. Sie regeln, wie die hochgeladenen Listen bearbeitet werden.",
+    fr: "Avant d'utiliser l'outil, veuillez lire les conditions d'utilisation. Elles règlent le traitement des listes chargées.",
+    en: "Before you use the tool, please read the terms of use. They govern how uploaded lists are processed."
+  },
+  terms_check: { de: "Ich habe die Nutzungsbedingungen gelesen und akzeptiere sie.", fr: "J'ai lu les conditions d'utilisation et je les accepte.", en: "I have read and accept the terms of use." },
+  terms_continue: { de: "Weiter", fr: "Continuer", en: "Continue" },
+  terms_changed: { de: "Die Nutzungsbedingungen wurden geändert. Die Seite wird neu geladen.", fr: "Les conditions ont changé. La page va être rechargée.", en: "The terms have changed. The page will reload." },
+  legal_terms: { de: "Nutzungsbedingungen", fr: "Conditions d'utilisation", en: "Terms of use" },
+  legal_privacy: { de: "Datenschutzerklärung", fr: "Protection des données", en: "Privacy notice" },
+  legal_imprint: { de: "Impressum", fr: "Mentions légales", en: "Imprint" },
 };
 
 let LANG = "de";

@@ -30,9 +30,21 @@ Endpoints (all JSON unless noted):
 The server keeps no state between requests: the browser holds the current
 plan and sends it back when it changes.
 
-Optional password: set TOOL_PASSWORD; the browser then asks for it (HTTP
-Basic auth, any user name). Geocoding cache: TOOL_GEOCODE_CACHE (default
-.geocode_cache.json in the working directory).
+  GET  /api/legal                   terms version, pages, accepted?
+  POST /api/legal/accept            {version} -> records the acceptance
+  GET  /legal/{page}                terms | privacy | imprint (HTML)
+
+Environment variables
+  TOOL_PASSWORD           optional password; the browser asks for it (HTTP
+                          Basic auth, any user name). On a server, logins
+                          per person in the reverse proxy are better.
+  TOOL_GEOCODE_CACHE      cache file (default .geocode_cache.json)
+  TOOL_GEOCODE_CACHE_MODE file (default) | memory | off
+  TOOL_CACHE_SECRET       secret for the hashed cache keys (see geocoding.py)
+  TOOL_CACHE_DAYS         how long a cached coordinate stays (default 30)
+  TOOL_API_DOCS           1: serve the API docs at /api/docs (off by
+                          default: they load scripts from a CDN)
+  more in security.py: body limit, access log, terms of use.
 """
 
 from __future__ import annotations
@@ -50,6 +62,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
+from starlette.formparsers import MultiPartParser
 
 from tour_insertion.csv_io import (format_time, geocoding_to_csv, parse_kind, read_rows_text,
                                    unplaced_from_row,
@@ -67,9 +80,15 @@ from tour_insertion.stop_import import REASON_NO_ADDRESS, Template, inspect
 from tour_insertion.stop_import import order_rows as import_rows
 from tour_insertion.planner import Unplaced, insert_orders
 from tour_insertion.schedule import forward_pass
+from tour_insertion.security import (SECURITY_HEADERS, BodyLimit, Legal, env_flag,
+                                     log_request, now, user_of)
 from tour_insertion.traveltime import CrowFlyModel
 
 ROOT = Path(os.environ.get("TOOL_ROOT", Path(__file__).resolve().parents[2]))
+
+# Uploads stay in memory: Starlette writes file parts larger than this to a
+# temporary file on disk. Our uploads are at most 2 MB, so keep them in RAM.
+MultiPartParser.spool_max_size = 4 * 1024 * 1024
 WEB = ROOT / "web"
 
 #: Example data sets offered in the web page: name -> (tours, orders)
@@ -281,18 +300,37 @@ def result_json(r: RunResult, settings: Settings, mode: str = "insert") -> dict:
 
 def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -> FastAPI:
     """The FastAPI app. `geocoder_factory` is replaced in tests."""
-    cache_path = Path(os.environ.get("TOOL_GEOCODE_CACHE", ".geocode_cache.json"))
+    mode = os.environ.get("TOOL_GEOCODE_CACHE_MODE", "file").strip().lower()
+    if mode not in ("file", "memory", "off"):
+        raise ValueError(f"TOOL_GEOCODE_CACHE_MODE must be file, memory or off, not {mode!r}")
+    cache_path = (Path(os.environ.get("TOOL_GEOCODE_CACHE", ".geocode_cache.json"))
+                  if mode == "file" else None)
+    cache_days = float(os.environ.get("TOOL_CACHE_DAYS", "30"))
     geocoders: dict[float, Geocoder] = {}
 
     def default_factory(settings: Settings) -> Geocoder:
         # one geocoder (and cache) per score threshold, shared by all requests
         if settings.min_score not in geocoders:
-            geocoders[settings.min_score] = make_geocoder(settings, cache_path)
+            g = make_geocoder(settings, cache_path, keep=mode != "off")
+            g.days = cache_days
+            geocoders[settings.min_score] = g
         return geocoders[settings.min_score]
 
     get_geocoder = geocoder_factory or default_factory
     password = os.environ.get("TOOL_PASSWORD")
-    app = FastAPI(title="Tour insertion tool", docs_url="/api/docs", redoc_url=None)
+    trust_remote_user = env_flag("TOOL_TRUST_REMOTE_USER")
+    legal = Legal(os.environ.get("TOOL_LEGAL_DIR") or None,
+                  os.environ.get("TOOL_CONSENT_LOG", "terms_accepted.jsonl"))
+    docs = env_flag("TOOL_API_DOCS")
+    app = FastAPI(title="Tour insertion tool", docs_url="/api/docs" if docs else None,
+                  openapi_url="/api/openapi.json" if docs else None, redoc_url=None)
+    app.add_middleware(BodyLimit,
+                       max_bytes=int(float(os.environ.get("TOOL_MAX_BODY_MB", "10")) * 1024 * 1024))
+    access_log = os.environ.get("TOOL_ACCESS_LOG", "short").strip().lower() != "off"
+
+    # Free without login and without accepted terms: the legal pages
+    # themselves and what the page needs to show them.
+    open_paths = ("/legal/", "/api/legal", "/api/health")
 
     @app.middleware("http")
     async def always_revalidate(request: Request, call_next):
@@ -303,9 +341,22 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
         response.headers.setdefault("Cache-Control", "no-cache")
         return response
 
+    @app.middleware("http")
+    async def terms_first(request: Request, call_next):
+        """With terms configured and a known user: no API use before the
+        current terms are accepted."""
+        path = request.url.path
+        if (legal.enabled and path.startswith("/api/") and not path.startswith(open_paths)):
+            user = user_of(request.headers, trust_remote_user)
+            if user is not None and not legal.accepted(user):
+                return JSONResponse(status_code=403, content={"detail": "terms_not_accepted"})
+        return await call_next(request)
+
     if password:
         @app.middleware("http")
         async def require_password(request: Request, call_next):
+            if request.url.path.startswith(open_paths):
+                return await call_next(request)
             header = request.headers.get("authorization", "")
             ok = False
             if header.startswith("Basic "):
@@ -319,6 +370,21 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
                                 headers={"WWW-Authenticate": 'Basic realm="tour-insert"'})
             return await call_next(request)
 
+    @app.middleware("http")
+    async def protect(request: Request, call_next):
+        """Security headers on every answer, and one short log line."""
+        start = now()
+        response = await call_next(request)
+        for name, value in SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
+        if docs and request.url.path.startswith("/api/docs"):
+            del response.headers["Content-Security-Policy"]   # docs need the CDN
+        if access_log:
+            client = request.client.host if request.client else None
+            log_request(request.method, request.url.path, response.status_code,
+                        now() - start, client)
+        return response
+
     @app.exception_handler(InputError)
     async def input_error(_: Request, error: InputError):
         return JSONResponse(status_code=400, content={"detail": str(error)})
@@ -326,6 +392,27 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
     @app.get("/api/health")
     def health():
         return "ok"
+
+    @app.get("/api/legal")
+    def legal_state(request: Request):
+        user = user_of(request.headers, trust_remote_user)
+        return {"enabled": legal.enabled, "version": legal.version(),
+                "pages": legal.pages(), "user": user,
+                "accepted": legal.accepted(user) if user is not None else None}
+
+    @app.post("/api/legal/accept")
+    def legal_accept(request: Request, body: dict):
+        user = user_of(request.headers, trust_remote_user)
+        if not legal.accept(user, str(body.get("version") or "")):
+            raise HTTPException(409, "terms changed, reload the page")
+        return {"accepted": True}
+
+    @app.get("/legal/{page}")
+    def legal_page(page: str):
+        path = legal.page(page)
+        if path is None:
+            raise HTTPException(404)
+        return FileResponse(path, media_type="text/html")
 
     @app.get("/api/profiles")
     def profiles():
@@ -559,9 +646,15 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
 
 def main() -> None:
     """Entry point `tour-insert-server`: serve on http://localhost:8000."""
+    import logging
+
     import uvicorn
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    # uvicorn's own access log shows full IPs and query strings: replaced by
+    # the short log in security.py (TOOL_ACCESS_LOG)
     uvicorn.run(create_app(), host=os.environ.get("HOST", "127.0.0.1"),
-                port=int(os.environ.get("PORT", "8000")))
+                port=int(os.environ.get("PORT", "8000")), access_log=False,
+                server_header=False)
 
 
 app = create_app()

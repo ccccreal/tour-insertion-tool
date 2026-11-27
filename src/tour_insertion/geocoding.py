@@ -6,8 +6,8 @@ France       IGN Geoplateforme, BAN data
 Switzerland  swisstopo GeoAdmin API, official building addresses
              https://api3.geo.admin.ch/rest/services/ech/SearchServer
 
-Both services are free and need no API key. Results are cached in a JSON
-file, so the same address is only looked up once.
+Both services are free and need no API key. Results can be cached, so the
+same address is only looked up once (see "Cache" below).
 
 Quality
 -------
@@ -17,18 +17,35 @@ coordinate would silently put the stop in the wrong place.
 The Swiss service has no score. There we check that the postal code of the
 input appears in the result; if not, the result counts as uncertain.
 
+Cache
+-----
+The cache must not become a readable list of every address ever uploaded.
+So it stores no address text at all: the key is an HMAC-SHA256 of the
+normalised address with a secret key, the value only country, status,
+coordinates, score and an expiry date (default 30 days). Old entries in the
+former plain-text format are dropped when the file is read.
+
+Pseudonymous, not anonymous: coordinates can be turned back into an address
+(reverse geocoding). Hence the expiry. The secret comes from the environment
+variable TOOL_CACHE_SECRET or, if unset, from a key file next to the cache
+(created with permissions 0600).
+
 The HTTP call is injectable (`fetch`), so the tests run without network.
 """
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
+import os
 import re
+import secrets
 import time
 import urllib.parse
 import urllib.request
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 
 FR_URL = "https://data.geopf.fr/geocodage/search"
@@ -142,39 +159,97 @@ class SwissGeocoder:
 # Cache + dispatch by country
 # --------------------------------------------------------------------------
 
+CACHE_DAYS = 30.0
+_HEX_KEY = re.compile(r"^[0-9a-f]{64}$")
+
+
+def cache_secret(cache_path: str | Path | None) -> bytes:
+    """Secret for the cache keys: TOOL_CACHE_SECRET, else a key file next to
+    the cache (created once, readable only by the owner), else random (then
+    the cache is only useful while the process runs)."""
+    env = os.environ.get("TOOL_CACHE_SECRET", "")
+    if env:
+        return env.encode("utf-8")
+    if not cache_path:
+        return secrets.token_bytes(32)
+    key_file = Path(f"{cache_path}.key")
+    if key_file.exists():
+        return bytes.fromhex(key_file.read_text(encoding="ascii").strip())
+    secret = secrets.token_bytes(32)
+    key_file.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="ascii") as f:
+        f.write(secret.hex())
+    return secret
+
+
 class Geocoder:
-    """Picks the provider by country and caches results in a JSON file."""
+    """Picks the provider by country and caches results (see module doc).
+
+    cache_path  JSON file for the cache; None keeps it in memory only
+    keep        False: no cache at all, every address is looked up again
+    days        how long a cached result stays valid
+    """
 
     def __init__(self, cache_path: str | Path | None = None,
-                 providers: dict | None = None):
+                 providers: dict | None = None, *, keep: bool = True,
+                 days: float = CACHE_DAYS, secret: bytes | None = None,
+                 now: Callable[[], float] = time.time):
         self.providers = providers or {"FR": FranceGeocoder(),
                                        "CH": SwissGeocoder()}
-        self.cache_path = Path(cache_path) if cache_path else None
+        self.keep, self.days, self.now = keep, days, now
+        self.cache_path = Path(cache_path) if cache_path and keep else None
+        self._secret = secret            # created on first use (key file)
         self.cache: dict[str, dict] = {}
         if self.cache_path and self.cache_path.exists():
-            self.cache = json.loads(self.cache_path.read_text(encoding="utf-8"))
+            raw = json.loads(self.cache_path.read_text(encoding="utf-8"))
+            self.cache = {k: v for k, v in raw.items() if self._valid(k, v)}
         self.lookups = 0   # requests actually sent (not from cache)
 
-    @staticmethod
-    def key(address: str, country: str) -> str:
-        return f"{country}|{' '.join(address.lower().split())}"
+    @property
+    def secret(self) -> bytes:
+        if self._secret is None:
+            self._secret = cache_secret(self.cache_path)
+        return self._secret
+
+    def _valid(self, key: str, value) -> bool:
+        """Hashed key, new format, not expired. Drops old plain-text entries."""
+        return (bool(_HEX_KEY.match(key)) and isinstance(value, dict)
+                and "query" not in value and "label" not in value
+                and float(value.get("until", 0)) > self.now())
+
+    def key(self, address: str, country: str) -> str:
+        text = f"{country}|{' '.join(address.lower().split())}"
+        return hmac.new(self.secret, text.encode("utf-8"), hashlib.sha256).hexdigest()
 
     def geocode(self, address: str, country: str = "") -> GeocodeResult:
         country = detect_country(address, country)
-        key = self.key(address, country)
-        if key in self.cache:
-            return GeocodeResult(**self.cache[key])
+        key = self.key(address, country) if self.keep else ""
+        hit = self.cache.get(key) if self.keep else None
+        if hit and float(hit["until"]) > self.now():
+            return GeocodeResult(address, hit["country"], hit["status"],
+                                 hit["lat"], hit["lon"], "", hit.get("score"))
         result = self.providers[country].geocode(address)
         self.lookups += 1
-        if result.status != NOT_FOUND:      # retry not-found next time
-            self.cache[key] = asdict(result)
+        if self.keep and result.status != NOT_FOUND:    # retry not-found next time
+            self.cache[key] = {"country": result.country, "status": result.status,
+                               "lat": result.lat, "lon": result.lon,
+                               "score": result.score,
+                               "until": round(self.now() + self.days * 86400)}
         return result
 
     def save(self) -> None:
-        if self.cache_path:
-            self.cache_path.write_text(
-                json.dumps(self.cache, ensure_ascii=False, indent=1),
-                encoding="utf-8")
+        """Write the cache (expired entries left out), atomically, mode 0600."""
+        if not self.cache_path:
+            return
+        now = self.now()
+        self.cache = {k: v for k, v in self.cache.items() if float(v["until"]) > now}
+        self.cache_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self.cache_path.with_name(self.cache_path.name + ".tmp")
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(self.cache, f, indent=1)
+        os.replace(tmp, self.cache_path)
 
 
 def needs_geocoding(row: dict[str, str]) -> bool:

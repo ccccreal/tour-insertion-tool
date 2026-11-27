@@ -1,14 +1,37 @@
-# docker compose up -d   ->  http://localhost:8000
+# docker compose up -d   ->  http://localhost:8000 (this machine only)
+#
+# On a server, put a reverse proxy with HTTPS and logins in front (Caddy);
+# the app itself is published on 127.0.0.1 only.
 services:
   tool:
     build: .
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
-      # set a password before putting this on the internet
+      # one shared password for a quick test; on a server use logins in the proxy
       TOOL_PASSWORD: ${TOOL_PASSWORD:-}
+      # secret for the hashed geocoding cache (any long random text)
+      TOOL_CACHE_SECRET: ${TOOL_CACHE_SECRET:-}
+      TOOL_GEOCODE_CACHE_MODE: ${TOOL_GEOCODE_CACHE_MODE:-file}
+      TOOL_CONSENT_LOG: /data/terms_accepted.jsonl
+      # folder with terms.html, privacy.html, imprint.html (mount it below)
+      TOOL_LEGAL_DIR: ${TOOL_LEGAL_DIR:-}
+      TOOL_TRUST_REMOTE_USER: ${TOOL_TRUST_REMOTE_USER:-0}
     volumes:
       - tool-data:/data
+      # - ./legal:/legal:ro        # with TOOL_LEGAL_DIR=/legal
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: local
+      options:
+        max-size: "5m"
+        max-file: "3"
     restart: unless-stopped
 volumes:
   tool-data:

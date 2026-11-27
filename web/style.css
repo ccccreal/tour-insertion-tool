@@ -212,3 +212,18 @@ button.secondary { background: transparent; border: 1px solid var(--accent); col
              box-shadow: 0 0 2px rgba(0,0,0,.6); box-sizing: border-box; }
 .building-map .pool-icon { cursor: copy; background: #f5b800; }
 td.nowrap { white-space: nowrap; }
+
+/* terms of use */
+.legal-links { margin-top: 28px; padding-top: 12px; border-top: 1px solid var(--line);
+               display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.legal-links a { color: var(--muted); }
+.terms-overlay { position: fixed; inset: 0; background: rgba(0, 0, 0, .65); z-index: 5000;
+                 display: flex; align-items: center; justify-content: center; }
+.terms-box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+             padding: 24px 28px; max-width: 480px; }
+.terms-box h2 { margin-top: 0; }
+.terms-box a { color: var(--ink); }
+.terms-label { display: flex; gap: 10px; align-items: flex-start; margin: 16px 0; }
+.terms-label input { margin-top: 3px; }
+.error-text { color: var(--bad); }
+.legal-links[hidden] { display: none; }

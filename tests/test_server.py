@@ -107,9 +107,10 @@ def test_schedule_marks_late_stops(client):
 def test_password(monkeypatch):
     monkeypatch.setenv("TOOL_PASSWORD", "secret")
     c = TestClient(create_app())
-    assert c.get("/api/health").status_code == 401
-    assert c.get("/api/health", auth=("x", "wrong")).status_code == 401
-    assert c.get("/api/health", auth=("anyone", "secret")).status_code == 200
+    assert c.get("/api/profiles").status_code == 401
+    assert c.get("/api/profiles", auth=("x", "wrong")).status_code == 401
+    assert c.get("/api/profiles", auth=("anyone", "secret")).status_code == 200
+    assert c.get("/api/health").status_code == 200      # for uptime checks
 
 
 def test_items_are_read_and_returned(client):

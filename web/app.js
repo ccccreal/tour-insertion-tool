@@ -90,6 +90,7 @@ async function init() {
   document.addEventListener("keydown", e => { if (e.key === "Escape" && state.placing) stopPlacing(); });
 
   try {
+    await termsFirst();
     state.profiles = await (await fetch("api/profiles")).json();
     state.examples = await (await fetch("api/examples")).json();
     state.planExamples = await (await fetch("api/plan-examples")).json();
@@ -100,6 +101,44 @@ async function init() {
   $("profile").replaceChildren(...Object.keys(state.profiles).map(n => h("option", { value: n }, n)));
   applyProfile(Object.keys(state.profiles)[0]);
   setMode(load("mode") === "insert" ? "insert" : "new");
+}
+
+// Terms of use: only when the server has them (TOOL_LEGAL_DIR). Links in
+// the sidebar footer; before the first use the terms must be accepted. With
+// a login the server keeps the record, without one only this browser does.
+async function termsFirst() {
+  const legal = await (await fetch("api/legal")).json();
+  if (!legal.enabled) return;
+  $("legal-links").replaceChildren(...legal.pages.map(p =>
+    h("a", { href: `legal/${p}`, target: "_blank", rel: "noopener", "data-i18n": `legal_${p}` }, t(`legal_${p}`))));
+  $("legal-links").hidden = false;
+  const done = legal.accepted === true ||
+    (legal.accepted === null && load("terms_version") === legal.version);
+  if (done) return;
+  await new Promise(resolve => {
+    const box = h("input", { type: "checkbox", id: "terms-check" });
+    const go = h("button", { class: "primary", type: "button", disabled: true }, t("terms_continue"));
+    box.addEventListener("change", () => { go.disabled = !box.checked; });
+    go.addEventListener("click", async () => {
+      const r = await fetch("api/legal/accept", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version: legal.version }) });
+      if (r.status === 409) { alertBox.textContent = t("terms_changed"); setTimeout(() => location.reload(), 1500); return; }
+      if (!r.ok) { alertBox.textContent = `${r.status}`; return; }
+      store("terms_version", legal.version);
+      overlay.remove();
+      resolve();
+    });
+    const alertBox = h("p", { class: "error-text" });
+    const overlay = h("div", { class: "terms-overlay" },
+      h("div", { class: "terms-box" },
+        h("h2", {}, t("terms_title")),
+        h("p", {}, t("terms_text")),
+        h("p", {}, h("a", { href: "legal/terms", target: "_blank", rel: "noopener" }, t("legal_terms"))),
+        h("label", { class: "terms-label" }, box, h("span", {}, t("terms_check"))),
+        go, alertBox));
+    document.body.append(overlay);
+  });
 }
 
 // Two ways to work: plan tours from a list of stops, or add new orders to

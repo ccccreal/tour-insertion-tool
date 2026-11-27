@@ -115,3 +115,61 @@ def test_uncertain_rows_stay_without_coordinates():
     rows = [{"address": "1 Rue A, 69001 Lyon", "lat": "", "lon": ""}]
     fill_coordinates(rows, g)
     assert rows[0]["lat"] == ""
+
+
+# --- cache privacy ---------------------------------------------------------
+
+def test_cache_file_holds_no_address_text(tmp_path):
+    cache = tmp_path / "cache.json"
+    g = Geocoder(cache, {"FR": FranceGeocoder(Recorder(fr_answer(4.8, 45.7, 0.9, "1 Rue A Lyon")),
+                                              pause_s=0)})
+    g.geocode("1 Rue A, 69001 Lyon")
+    g.save()
+    text = cache.read_text(encoding="utf-8").lower()
+    assert "rue" not in text and "lyon" not in text and "69001" not in text
+    assert oct(cache.stat().st_mode & 0o777) == "0o600"
+    assert (tmp_path / "cache.json.key").exists()
+
+
+def test_cache_entries_expire(tmp_path):
+    clock = [1_000_000.0]
+    fetch = Recorder(fr_answer(4.8, 45.7, 0.9))
+    g = Geocoder(tmp_path / "c.json", {"FR": FranceGeocoder(fetch, pause_s=0)},
+                 days=1, now=lambda: clock[0])
+    g.geocode("1 Rue A, 69001 Lyon")
+    clock[0] += 2 * 86400
+    g.geocode("1 Rue A, 69001 Lyon")
+    assert len(fetch.calls) == 2
+    g.save()
+    clock[0] += 2 * 86400
+    g2 = Geocoder(tmp_path / "c.json", {"FR": FranceGeocoder(fetch, pause_s=0)},
+                  days=1, now=lambda: clock[0])
+    assert g2.cache == {}
+
+
+def test_old_plain_text_cache_is_dropped(tmp_path):
+    cache = tmp_path / "c.json"
+    cache.write_text('{"FR|1 rue a, 69001 lyon": {"query": "1 Rue A", "country": "FR", '
+                     '"status": "ok", "lat": 45.7, "lon": 4.8, "label": "x", "score": 0.9}}')
+    fetch = Recorder(fr_answer(4.8, 45.7, 0.9))
+    g = Geocoder(cache, {"FR": FranceGeocoder(fetch, pause_s=0)})
+    assert g.cache == {}
+    g.save()
+    assert "rue" not in cache.read_text()
+
+
+def test_keep_false_never_caches(tmp_path):
+    fetch = Recorder(fr_answer(4.8, 45.7, 0.9))
+    g = Geocoder(tmp_path / "c.json", {"FR": FranceGeocoder(fetch, pause_s=0)}, keep=False)
+    g.geocode("1 Rue A, 69001 Lyon")
+    g.geocode("1 Rue A, 69001 Lyon")
+    g.save()
+    assert len(fetch.calls) == 2 and not (tmp_path / "c.json").exists()
+
+
+def test_secret_from_environment(tmp_path, monkeypatch):
+    monkeypatch.setenv("TOOL_CACHE_SECRET", "s3cret")
+    g = Geocoder(tmp_path / "c.json", {"FR": FranceGeocoder(Recorder({}), pause_s=0)})
+    assert g.secret == b"s3cret" and not (tmp_path / "c.json.key").exists()
+    other = Geocoder(None, {}, secret=b"other")
+    assert g.key("1 Rue A", "FR") != other.key("1 Rue A", "FR")

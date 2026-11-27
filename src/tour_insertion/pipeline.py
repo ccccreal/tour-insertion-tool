@@ -155,10 +155,11 @@ class RunResult:
         return frozenset().union(*(c.moved for c in self.changes))
 
 
-def make_geocoder(settings: Settings, cache_path=None) -> Geocoder:
+def make_geocoder(settings: Settings, cache_path=None, keep: bool = True) -> Geocoder:
+    """cache_path None + keep: cache in memory only; keep False: no cache."""
     return Geocoder(cache_path, {
         "FR": FranceGeocoder(min_score=settings.min_score),
-        "CH": SwissGeocoder()})
+        "CH": SwissGeocoder()}, keep=keep)
 
 
 def _reason(result: GeocodeResult | None) -> str:

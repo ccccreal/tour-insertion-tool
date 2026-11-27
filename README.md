@@ -66,7 +66,7 @@ uv run tour-insert-server        # opens on http://localhost:8000
   core. It keeps no state; the page holds the current plan.
   `POST /api/plan` plans, `POST /api/schedule` recomputes times after a
   manual move, `POST /api/insert` inserts one stop placed by hand.
-  API docs: `/api/docs`.
+  API docs: `/api/docs` (only with `TOOL_API_DOCS=1`).
 - `web/`: the page (plain JavaScript, Leaflet map, no build step).
 - Drag & drop: drop a stop (or an order marked ✕ that fits nowhere) on a
   tour line; it goes between the two stops of that line, both tours are
@@ -81,8 +81,8 @@ uv run tour-insert-server        # opens on http://localhost:8000
   order goes to its cheapest feasible position in any tour, a skipped tour
   stop to the cheapest position in its own tour (its original position is
   not kept). If nothing fits, it stays as ✕ and can be dragged by hand.
-- `TOOL_PASSWORD=...` asks for a password (HTTP Basic auth).
-  `TOOL_GEOCODE_CACHE` sets the cache file.
+- `TOOL_PASSWORD=...` asks for a password (HTTP Basic auth). All other
+  settings for running on a server: see *Security and privacy*.
 
 ### Docker
 
@@ -91,9 +91,44 @@ docker compose up -d             # http://localhost:8000
 # or: docker build -t tour-insertion . && docker run -p 8000:8000 tour-insertion
 ```
 
-The same image runs on any server. Put it behind HTTPS (e.g. Caddy or the
-provider's proxy) and set `TOOL_PASSWORD` before it is reachable from the
-internet.
+The same image runs on any server. `compose.yaml` publishes the app on
+`127.0.0.1:8000` only, so it is reachable through a reverse proxy with HTTPS
+and logins (e.g. Caddy) and not directly from the internet. The container
+runs as a normal user with a read-only file system and no extra rights;
+only `/data` (geocoding cache, record of accepted terms) is writable. Logs
+are rotated by size.
+
+### Security and privacy
+
+The server keeps no uploads, plans or exports: each request brings its data
+and forgets it afterwards. What is left, and how it is limited:
+
+| what | how |
+|---|---|
+| geocoding cache | no address text: key = HMAC-SHA256 of the address with a secret, value = coordinates and expiry (30 days). Old plain-text entries are dropped. Pseudonymous, not anonymous (coordinates can be turned back into an address). |
+| uploads | at most 2 MB per file and 10 MB per request; kept in memory, never written to disk |
+| logs | one line per request: IP with the last part removed, method, path, status, time. No query strings, no file names, no content. |
+| the page | loads only its own code (Leaflet is in `web/vendor/`). Content-Security-Policy and further headers on every answer. Map tiles come from OpenStreetMap, which sees the IP and the map area. |
+| terms of use | optional: with `TOOL_LEGAL_DIR` the footer links terms, privacy notice and imprint, and every user accepts the terms once (recorded per user and terms version). |
+
+Environment variables:
+
+| variable | default | meaning |
+|---|---|---|
+| `TOOL_GEOCODE_CACHE_MODE` | `file` | `file`, `memory` (lost on restart) or `off` (every address looked up again) |
+| `TOOL_GEOCODE_CACHE` | `.geocode_cache.json` | cache file |
+| `TOOL_CACHE_SECRET` | key file next to the cache | secret for the hashed cache keys; set it on a server and keep it out of backups of `/data` |
+| `TOOL_CACHE_DAYS` | `30` | how long a coordinate stays in the cache |
+| `TOOL_MAX_BODY_MB` | `10` | largest request |
+| `TOOL_ACCESS_LOG` | `short` | `short` or `off` |
+| `TOOL_LEGAL_DIR` | unset | folder with `terms.html`, `privacy.html`, `imprint.html` |
+| `TOOL_CONSENT_LOG` | `terms_accepted.jsonl` | record of accepted terms (user, version, time) |
+| `TOOL_TRUST_REMOTE_USER` | off | `1`: user name from the `X-Remote-User` header set by the proxy after its login |
+| `TOOL_PASSWORD` | unset | one shared password (for a quick test; per-person logins belong in the proxy) |
+| `TOOL_API_DOCS` | off | `1`: API docs at `/api/docs` (they load scripts from a CDN) |
+
+The legal pages and `/api/health` are reachable without login, so the
+imprint is public and an uptime check works.
 
 ## Input
 
@@ -224,7 +259,8 @@ drops filled. `tours_new.csv` has the columns `vehicle`, `type` and `load`
 | CH | swisstopo GeoAdmin API, official building addresses | postal code of the input appears in the result |
 
 Both are free and need no key. Results are cached in `.geocode_cache.json`
-(`--geocode-cache`), so each address is looked up once.
+(`--geocode-cache`) for 30 days, so each address is looked up once. The
+cache holds no address text (see *Security and privacy*).
 
 - The **depot** (and an end place) must be found: otherwise the run stops,
   because every time of the tour depends on it. Tip: give it as lat/lon.
@@ -314,4 +350,5 @@ WGS84 coordinates and time windows. This project is not part of that work.
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE). `web/vendor/leaflet/` is
+[Leaflet](https://leafletjs.com) 1.9.4, BSD 2-Clause, see its LICENSE file.
