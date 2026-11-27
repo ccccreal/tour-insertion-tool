@@ -16,7 +16,7 @@ means what:
     info        columns passed on unchanged to the export (contact, opening
                 hours, ...), not used for planning
     labels      readable names for info columns in the export, e.g.
-                {"Praxis_Klinik": "Praxis"} (optional)
+                {"Praxis_Klinik": "Praxis/Klinik"} (optional)
     country     "CH", "FR" or "" (guess from the postal code)
     kind        "drop" or "pickup" for all stops of the file
 

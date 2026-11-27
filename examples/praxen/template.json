@@ -1,35 +1,28 @@
 {
   "title": "Praxen (Strasse, PLZ, Ort getrennt)",
   "address": [
-    "zuweiserstrasse"
+    "Strasse"
   ],
-  "postcode": "zuweiserplz",
-  "city": "zuweiserort",
+  "postcode": "PLZ",
+  "city": "Ort",
   "id": "",
   "name_columns": [
-    "zuweiseranrede",
-    "zuweisertitel",
-    "zuweiservorname",
-    "zuweisername"
+    "Anrede",
+    "Titel",
+    "Vorname",
+    "Nachname"
   ],
   "quantities": [],
   "default_items": 1,
   "info": [
-    "zuweiseranrede",
-    "zuweisertitel",
-    "zuweiservorname",
-    "zuweisername",
-    "Praxis_Klinik",
+    "Anrede",
+    "Titel",
+    "Vorname",
+    "Nachname",
+    "Praxis/Klinik",
     "Zusatz",
     "Öffnungszeiten"
   ],
   "country": "CH",
-  "kind": "drop",
-  "labels": {
-    "zuweiseranrede": "Anrede",
-    "zuweisertitel": "Titel",
-    "zuweiservorname": "Vorname",
-    "zuweisername": "Nachname",
-    "Praxis_Klinik": "Praxis/Klinik"
-  }
+  "kind": "drop"
 }

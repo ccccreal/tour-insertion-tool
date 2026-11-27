@@ -64,7 +64,7 @@ def test_guess_finds_the_columns():
     assert g["address"] == ["Adresse"] and g["id"] == "Standort"
     assert g["quantities"] == ["Box 50er", "Box 25er"]
     g = inspect(stops("praxen"), "stops.xlsx")["guess"]
-    assert (g["address"], g["postcode"], g["city"]) == (["zuweiserstrasse"], "zuweiserplz", "zuweiserort")
+    assert (g["address"], g["postcode"], g["city"]) == (["Strasse"], "PLZ", "Ort")
     assert g["quantities"] == [] and "Öffnungszeiten" in g["info"]
 
 
