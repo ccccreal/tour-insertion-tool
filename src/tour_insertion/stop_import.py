@@ -382,3 +382,20 @@ def stops_template_xlsx(lang: str = "de") -> bytes:
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
+
+
+def table_to_csv(table: Table) -> bytes:
+    """A table as CSV for Excel in Switzerland/Germany/France: separator ';',
+    UTF-8 with byte order mark (so umlauts open correctly)."""
+    out = io.StringIO()
+    writer = csv.writer(out, delimiter=";", lineterminator="\r\n")
+    writer.writerow(table.headers)
+    for row in table.rows:
+        writer.writerow([row.get(h, "") for h in table.headers])
+    return ("\ufeff" + out.getvalue()).encode("utf-8")
+
+
+def stops_template_csv(lang: str = "de") -> bytes:
+    """The empty template as CSV (header row only)."""
+    text = _TEMPLATE_TEXT.get(lang, _TEMPLATE_TEXT["de"])
+    return table_to_csv(Table(text["sheet"], text["headers"], []))

@@ -10,7 +10,8 @@ Endpoints (all JSON unless noted):
   GET  /api/examples                names of the example data sets
   GET  /api/examples/{name}/{kind}  CSV text, kind = tours | orders
   GET  /api/templates/{kind}        CSV template to download (tours, orders)
-  GET  /api/templates/stops?lang=   empty Excel stop list with instructions
+  GET  /api/templates/stops?lang=&fmt=  empty stop list: xlsx (with
+                                    instructions) or csv
   POST /api/plan                    form: tours (file, optional), orders
                                     (file), settings (JSON text), template
                                     (JSON text, optional) -> full result.
@@ -77,7 +78,8 @@ from tour_insertion.model import Schedule, Stop, Tour
 from tour_insertion.pipeline import (DEFAULT_VEHICLES, InputError, RunResult, Settings,
                                      apply_vehicles, make_geocoder, plan_new, prepare_stops,
                                      run)
-from tour_insertion.stop_import import REASON_NO_ADDRESS, Template, inspect, stops_template_xlsx
+from tour_insertion.stop_import import (REASON_NO_ADDRESS, Template, inspect, read_tables,
+                                        stops_template_csv, stops_template_xlsx, table_to_csv)
 from tour_insertion.stop_import import order_rows as import_rows
 from tour_insertion.planner import Unplaced, insert_orders
 from tour_insertion.schedule import forward_pass
@@ -438,13 +440,16 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
         return path.read_text(encoding="utf-8-sig")
 
     @app.get("/api/templates/stops")
-    def stops_template(lang: str = "de"):
+    def stops_template(lang: str = "de", fmt: str = "xlsx"):
         names = {"de": "vorlage_stopps", "fr": "modele_arrets", "en": "stops_template"}
+        name = names.get(lang, names["de"])
+        if fmt == "csv":
+            return Response(stops_template_csv(lang), media_type="text/csv; charset=utf-8",
+                            headers={"Content-Disposition": f'attachment; filename="{name}.csv"'})
         return Response(stops_template_xlsx(lang),
                         media_type="application/vnd.openxmlformats-officedocument."
                                    "spreadsheetml.sheet",
-                        headers={"Content-Disposition":
-                                 f'attachment; filename="{names.get(lang, names["de"])}.xlsx"'})
+                        headers={"Content-Disposition": f'attachment; filename="{name}.xlsx"'})
 
     @app.get("/api/templates/{kind}")
     def template(kind: str):
@@ -469,11 +474,15 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
 
     @app.get("/api/plan-examples/{name}/{part}")
     def plan_example(name: str, part: str):
-        if name not in PLAN_EXAMPLES or part not in ("stops", "template"):
+        if name not in PLAN_EXAMPLES or part not in ("stops", "stops.csv", "template"):
             raise HTTPException(404)
         folder = ROOT / "examples" / name
         if part == "template":
             return json.loads((folder / "template.json").read_text(encoding="utf-8"))
+        if part == "stops.csv":                 # the same list as CSV
+            table = read_tables((folder / "stops.xlsx").read_bytes(), "stops.xlsx")[0]
+            return Response(table_to_csv(table), media_type="text/csv; charset=utf-8",
+                            headers={"Content-Disposition": f'attachment; filename="{name}.csv"'})
         return FileResponse(folder / "stops.xlsx", filename=f"{name}.xlsx",
                             media_type="application/vnd.openxmlformats-officedocument."
                                        "spreadsheetml.sheet")

@@ -104,11 +104,19 @@
 
       <details class="box only-new">
         <summary data-i18n="templates"></summary>
-        <p><a id="stops-template" href="api/templates/stops" data-i18n="template_stops"></a></p>
+        <p><span data-i18n="template_stops"></span>
+          <a id="stops-template" href="api/templates/stops">Excel</a> ·
+          <a id="stops-template-csv" href="api/templates/stops?fmt=csv">CSV</a></p>
         <p class="small muted" data-i18n="template_stops_help"></p>
-        <p class="small"><span data-i18n="template_examples"></span>
-          <a href="api/plan-examples/praxen/stops" data-i18n="template_ex_praxen"></a> ·
-          <a href="api/plan-examples/standorte/stops" data-i18n="template_ex_standorte"></a></p>
+        <p class="small" data-i18n="template_examples"></p>
+        <ul class="small template-list">
+          <li><span data-i18n="template_ex_praxen"></span>
+            <a href="api/plan-examples/praxen/stops">Excel</a> ·
+            <a href="api/plan-examples/praxen/stops.csv">CSV</a></li>
+          <li><span data-i18n="template_ex_standorte"></span>
+            <a href="api/plan-examples/standorte/stops">Excel</a> ·
+            <a href="api/plan-examples/standorte/stops.csv">CSV</a></li>
+        </ul>
       </details>
 
       <div id="mapping" class="mapping" hidden></div>

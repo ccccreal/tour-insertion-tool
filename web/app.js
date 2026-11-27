@@ -73,10 +73,10 @@ async function init() {
 
   $("language").addEventListener("change", () => {
     LANG = $("language").value; store("lang", LANG);
-    applyTexts(); modeTexts(); fillSources(); renderMapping(); $("optimize-help").title = t("optimize_help");
+    applyTexts(); modeTexts(); fillSources(); renderMapping(); setHelp($("optimize-help"), t("optimize_help"));
     if (state.plan) render();
   });
-  $("optimize-help").title = t("optimize_help");
+  setHelp($("optimize-help"), t("optimize_help"));
   initMap();                        // the map is there from the start
   $("profile").addEventListener("change", () => applyProfile($("profile").value));
   $("run").addEventListener("click", runPlan);
@@ -101,6 +101,15 @@ async function init() {
   $("profile").replaceChildren(...Object.keys(state.profiles).map(n => h("option", { value: n }, n)));
   applyProfile(Object.keys(state.profiles)[0]);
   setMode(load("mode") === "insert" ? "insert" : "new");
+}
+
+// "?" next to an option: the explanation appears on hover, on keyboard focus
+// and on tap (CSS tooltip from data-tip; the native title tooltip is slow
+// and does not work on touch screens).
+function setHelp(el, text) {
+  el.dataset.tip = text;
+  el.setAttribute("aria-label", text);
+  el.removeAttribute("title");
 }
 
 // Terms of use: only when the server has them (TOOL_LEGAL_DIR). Links in
@@ -170,6 +179,7 @@ function busy(on, key) {
 // (elements with class only-new / only-insert).
 function modeTexts() {
   $("stops-template").href = `api/templates/stops?lang=${LANG}`;
+  $("stops-template-csv").href = `api/templates/stops?lang=${LANG}&fmt=csv`;
   $("intro").textContent = t(state.mode === "new" ? "intro_new" : "intro");
   const rest = state.mode === "new" && state.draft;
   $("run").textContent = t(state.mode === "new" ? (rest ? "run_rest" : "run_new") : "run");

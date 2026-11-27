@@ -313,3 +313,12 @@ def test_stops_template_download(client):
     r = client.get("/api/templates/stops?lang=fr")
     assert r.status_code == 200 and r.content[:2] == b"PK"          # xlsx = zip
     assert "modele_arrets.xlsx" in r.headers["content-disposition"]
+
+
+def test_csv_templates_and_examples(client):
+    r = client.get("/api/templates/stops?lang=de&fmt=csv")
+    assert r.status_code == 200 and r.content.startswith("﻿Nr.;Name;Strasse".encode())
+    r = client.get("/api/plan-examples/standorte/stops.csv")
+    assert r.status_code == 200 and "Kernstrasse 60" in r.content.decode("utf-8")
+    inspected = client.post("/api/inspect", files={"file": ("standorte.csv", r.content)}).json()
+    assert inspected["sheets"][0]["rows"] >= 20

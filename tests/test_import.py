@@ -187,3 +187,12 @@ def test_filled_template_is_recognised(lang):
     assert guess["city"] == headers[4] and guess["id"] == headers[0]
     assert guess["name_columns"] == [headers[1]] and guess["quantities"] == [headers[5]]
     assert guess["info"] == [headers[6]]
+
+
+def test_filled_csv_template_is_recognised():
+    from tour_insertion.stop_import import inspect, stops_template_csv
+    text = stops_template_csv("de").decode("utf-8")
+    text += "1;Praxis A;Bahnhofstrasse 1;8001;Zürich;3;Tel. 044\r\n2;Praxis B;Seestrasse 5;8002;Zürich;2;\r\n"
+    guess = inspect(text.encode("utf-8"), "liste.csv")["guess"]
+    assert guess["address"] == ["Strasse"] and guess["postcode"] == "PLZ"
+    assert guess["city"] == "Ort" and guess["quantities"] == ["Menge"]
