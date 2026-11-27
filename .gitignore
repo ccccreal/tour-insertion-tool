@@ -12,3 +12,10 @@ out*/
 data/
 .geocode_cache.json*
 terms_accepted.jsonl
+# server-only files: secrets, logins, legal texts with personal data
+.env
+.env.*
+!.env.example
+Caddyfile
+deploy/*.local
+legal/

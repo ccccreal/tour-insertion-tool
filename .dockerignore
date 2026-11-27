@@ -4,5 +4,11 @@
 .pytest_cache
 out*
 docs
-.geocode_cache.json
+.geocode_cache.json*
+terms_accepted.jsonl
+.env
+.env.*
+Caddyfile
+legal
+data
 *.egg-info

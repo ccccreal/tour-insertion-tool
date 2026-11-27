@@ -335,6 +335,8 @@ this repository.
   it; N5 and N6 are pickups; N7 cannot be reached in time on purpose.
 - `examples/praxen/stops.xlsx`: 141 invented practices (Zurich region),
   street, postcode and city in separate columns, opening hours as info.
+  The addresses are real (so geocoding works), the names are placeholders
+  (Muster, Beispiel, Praxis Beispiel 1, ...) and belong to no one.
 - `examples/standorte/stops.xlsx`: 20 invented locations, address in one
   column, two products (Box 50er, Box 25er), a total row.
 - `examples/lyon/`: 2 tours, 7 orders, addresses only (needs internet).
