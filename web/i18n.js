@@ -20,6 +20,15 @@ const TEXT = {
   templates: { de: "Vorlagen", fr: "Modèles", en: "Templates" },
   template_tours: { de: "Touren", fr: "tournées", en: "tours" },
   template_orders: { de: "Aufträge", fr: "commandes", en: "orders" },
+  template_stops: { de: "Leere Vorlage für eine Stoppliste (Excel)", fr: "Modèle vide de liste d'arrêts (Excel)", en: "Empty stop list template (Excel)" },
+  template_stops_help: {
+    de: "Eine Zeile pro Stopp: Name, Adresse, Menge und Infos. Das zweite Blatt erklärt die Spalten. Eigene Listen in anderem Aufbau gehen auch; die Spalten lassen sich nach dem Hochladen zuordnen.",
+    fr: "Une ligne par arrêt : nom, adresse, quantité et infos. La deuxième feuille explique les colonnes. Des listes avec une autre structure fonctionnent aussi ; les colonnes s'attribuent après le chargement.",
+    en: "One row per stop: name, address, quantity and notes. The second sheet explains the columns. Lists in another layout work too; the columns can be mapped after uploading."
+  },
+  template_examples: { de: "Ausgefüllte Beispiele:", fr: "Exemples remplis :", en: "Filled-in examples:" },
+  template_ex_praxen: { de: "Praxen (Strasse, PLZ, Ort getrennt)", fr: "Cabinets (rue, NPA, ville séparés)", en: "Practices (street, postcode, city separate)" },
+  template_ex_standorte: { de: "Standorte (Adresse in einer Spalte, zwei Produkte)", fr: "Sites (adresse en une colonne, deux produits)", en: "Sites (address in one column, two products)" },
   run: { de: "Einfügen", fr: "Insérer", en: "Insert" },
   running: { de: "Rechne …", fr: "Calcul …", en: "Computing …" },
   need_files: { de: "Bitte beide Dateien hochladen.", fr: "Veuillez charger les deux fichiers.", en: "Please upload both files." },

@@ -65,10 +65,6 @@
       <label><span data-i18n="service"></span><input id="service" type="number" min="0" max="60" step="1"></label>
       <label><span data-i18n="tolerance"></span><input id="tolerance" type="number" min="0" max="120" step="1"></label>
 
-      <h3 data-i18n="sec_planning"></h3>
-      <label class="check"><input id="optimize" type="checkbox">
-        <span data-i18n="optimize"></span>
-        <span class="help" id="optimize-help" tabindex="0">?</span></label>
       <details class="box">
         <summary data-i18n="advanced"></summary>
         <label><span data-i18n="min_score"></span><input id="min-score" type="number" min="0" max="1" step="0.05"></label>
@@ -106,7 +102,20 @@
         </details>
       </div>
 
+      <details class="box only-new">
+        <summary data-i18n="templates"></summary>
+        <p><a id="stops-template" href="api/templates/stops" data-i18n="template_stops"></a></p>
+        <p class="small muted" data-i18n="template_stops_help"></p>
+        <p class="small"><span data-i18n="template_examples"></span>
+          <a href="api/plan-examples/praxen/stops" data-i18n="template_ex_praxen"></a> ·
+          <a href="api/plan-examples/standorte/stops" data-i18n="template_ex_standorte"></a></p>
+      </details>
+
       <div id="mapping" class="mapping" hidden></div>
+
+      <label class="check optimize-main"><input id="optimize" type="checkbox">
+        <span data-i18n="optimize"></span>
+        <span class="help" id="optimize-help" tabindex="0">?</span></label>
 
       <div class="run-row">
         <button id="show-stops" class="secondary only-new" type="button" data-i18n="show_stops"></button>

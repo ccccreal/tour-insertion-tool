@@ -241,3 +241,6 @@ td.nowrap { white-space: nowrap; }
            animation: spin .9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+
+/* optimisation choice next to the run button */
+.optimize-main { margin: 14px 0 4px; }

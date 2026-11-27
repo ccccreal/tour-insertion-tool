@@ -169,6 +169,7 @@ function busy(on, key) {
 // tours planned the evening before. The page shows only what the mode needs
 // (elements with class only-new / only-insert).
 function modeTexts() {
+  $("stops-template").href = `api/templates/stops?lang=${LANG}`;
   $("intro").textContent = t(state.mode === "new" ? "intro_new" : "intro");
   const rest = state.mode === "new" && state.draft;
   $("run").textContent = t(state.mode === "new" ? (rest ? "run_rest" : "run_new") : "run");

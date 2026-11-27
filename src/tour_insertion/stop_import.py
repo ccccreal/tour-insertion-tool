@@ -180,7 +180,7 @@ _PATTERNS = {
     "city": r"\b(ort|stadt|city|ville|localit|commune|gemeinde)\b|(?<!stand)ort$",
     "address": r"adress|address|strasse|straße|street|rue\b|adresse",
     "id": r"^(nr\.?|no\.?|id|nummer|number|n°|standort|code)$",
-    "name": r"standort|name|praxis|klinik|firma|kunde|client|site|empf",
+    "name": r"standort|name|\bnom\b|praxis|klinik|firma|kunde|client|site|empf",
 }
 
 
@@ -312,3 +312,73 @@ def order_rows(data: bytes, filename: str, template: Template
             result["_info"]["floor"] = ", ".join(floors)
         (out if street else no_address).append(result)
     return out, no_address
+
+
+# --------------------------------------------------------------------------
+# Empty template for users (web page: "Vorlagen" in the planning mode)
+# --------------------------------------------------------------------------
+
+_TEMPLATE_TEXT = {
+    "de": {"sheet": "Stopps", "help_sheet": "Anleitung",
+           "headers": ["Nr.", "Name", "Strasse", "PLZ", "Ort", "Menge", "Info"],
+           "help": [
+               "Eine Zeile pro Stopp. Die Spalten oben sind ein Vorschlag, eigene Listen gehen auch.",
+               "Nr.: eindeutige Nummer (optional, sonst zählt das Tool selbst).",
+               "Name: Firma, Praxis oder Person; erscheint auf der Karte und im Fahrerblatt.",
+               "Strasse, PLZ, Ort: die Adresse. Die ganze Adresse in einer Spalte geht auch.",
+               "Stockwerk (z.B. «1. Stock») darf in der Strasse stehen; es wird beim Suchen weggelassen.",
+               "Menge: Anzahl Pakete oder Kisten (ganze Zahl). Mehrere Produkte: eine Spalte pro Produkt.",
+               "Info: alles weitere (Telefon, Öffnungszeiten, Hinweise); kommt unverändert ins Fahrerblatt.",
+               "Keine Gesundheitsangaben oder andere besonders schützenswerte Daten eintragen.",
+               "Im Tool zeigt «Spalten zuordnen», welche Spalte wofür verwendet wird; dort lässt sich alles anpassen.",
+           ]},
+    "fr": {"sheet": "Arrets", "help_sheet": "Mode d'emploi",
+           "headers": ["N°", "Nom", "Rue", "Code postal", "Ville", "Quantité", "Info"],
+           "help": [
+               "Une ligne par arrêt. Les colonnes ci-dessus sont une proposition, d'autres listes fonctionnent aussi.",
+               "N° : numéro unique (facultatif, sinon l'outil numérote lui-même).",
+               "Nom : entreprise, cabinet ou personne ; affiché sur la carte et la feuille de route.",
+               "Rue, Code postal, Ville : l'adresse. L'adresse entière dans une seule colonne fonctionne aussi.",
+               "Quantité : nombre de colis ou de caisses (nombre entier). Plusieurs produits : une colonne par produit.",
+               "Info : tout le reste (téléphone, horaires, remarques) ; repris tel quel dans la feuille de route.",
+               "Ne pas saisir de données de santé ni d'autres données sensibles.",
+               "Dans l'outil, « Attribuer les colonnes » montre à quoi sert chaque colonne ; tout peut y être ajusté.",
+           ]},
+    "en": {"sheet": "Stops", "help_sheet": "How to",
+           "headers": ["No.", "Name", "Street", "Postal code", "City", "Quantity", "Info"],
+           "help": [
+               "One row per stop. The columns above are a suggestion; your own lists work as well.",
+               "No.: unique number (optional, otherwise the tool numbers the stops).",
+               "Name: company, practice or person; shown on the map and on the driver sheet.",
+               "Street, Postal code, City: the address. The whole address in one column works too.",
+               "Quantity: number of parcels or boxes (whole number). Several products: one column each.",
+               "Info: everything else (phone, opening hours, notes); copied unchanged to the driver sheet.",
+               "Do not enter health data or other sensitive personal data.",
+               "In the tool, the column mapping shows what each column is used for; everything can be changed there.",
+           ]},
+}
+
+
+def stops_template_xlsx(lang: str = "de") -> bytes:
+    """Empty stop list with suggested columns and a sheet of instructions."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    text = _TEMPLATE_TEXT.get(lang, _TEMPLATE_TEXT["de"])
+    wb = Workbook()
+    ws = wb.active
+    ws.title = text["sheet"]
+    ws.append(text["headers"])
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+        cell.fill = PatternFill("solid", fgColor="DDEBF7")
+    for letter, width in zip("ABCDEFG", (8, 30, 30, 10, 20, 10, 40)):
+        ws.column_dimensions[letter].width = width
+    ws.freeze_panes = "A2"
+    help_ws = wb.create_sheet(text["help_sheet"])
+    for line in text["help"]:
+        help_ws.append([line])
+    help_ws.column_dimensions["A"].width = 110
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()

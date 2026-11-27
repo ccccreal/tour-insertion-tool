@@ -9,7 +9,8 @@ Endpoints (all JSON unless noted):
   GET  /api/profiles                default settings per customer/city
   GET  /api/examples                names of the example data sets
   GET  /api/examples/{name}/{kind}  CSV text, kind = tours | orders
-  GET  /api/templates/{kind}        CSV template to download
+  GET  /api/templates/{kind}        CSV template to download (tours, orders)
+  GET  /api/templates/stops?lang=   empty Excel stop list with instructions
   POST /api/plan                    form: tours (file, optional), orders
                                     (file), settings (JSON text), template
                                     (JSON text, optional) -> full result.
@@ -76,7 +77,7 @@ from tour_insertion.model import Schedule, Stop, Tour
 from tour_insertion.pipeline import (DEFAULT_VEHICLES, InputError, RunResult, Settings,
                                      apply_vehicles, make_geocoder, plan_new, prepare_stops,
                                      run)
-from tour_insertion.stop_import import REASON_NO_ADDRESS, Template, inspect
+from tour_insertion.stop_import import REASON_NO_ADDRESS, Template, inspect, stops_template_xlsx
 from tour_insertion.stop_import import order_rows as import_rows
 from tour_insertion.planner import Unplaced, insert_orders
 from tour_insertion.schedule import forward_pass
@@ -435,6 +436,15 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
         if not path.exists():
             raise HTTPException(404)
         return path.read_text(encoding="utf-8-sig")
+
+    @app.get("/api/templates/stops")
+    def stops_template(lang: str = "de"):
+        names = {"de": "vorlage_stopps", "fr": "modele_arrets", "en": "stops_template"}
+        return Response(stops_template_xlsx(lang),
+                        media_type="application/vnd.openxmlformats-officedocument."
+                                   "spreadsheetml.sheet",
+                        headers={"Content-Disposition":
+                                 f'attachment; filename="{names.get(lang, names["de"])}.xlsx"'})
 
     @app.get("/api/templates/{kind}")
     def template(kind: str):

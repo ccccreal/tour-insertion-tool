@@ -307,3 +307,9 @@ def test_show_stops_then_plan_rest_with_a_tour_by_hand(zurich_client):
     assert kept == ["C", "A"]
     assert all(s["stop_id"] not in ("C", "A") for t, tour in tours.items() if t != "Lastenvelo 1"
                for s in tour["stops"])
+
+
+def test_stops_template_download(client):
+    r = client.get("/api/templates/stops?lang=fr")
+    assert r.status_code == 200 and r.content[:2] == b"PK"          # xlsx = zip
+    assert "modele_arrets.xlsx" in r.headers["content-disposition"]

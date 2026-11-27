@@ -163,3 +163,27 @@ def test_tours_planned_by_hand_stay_as_they_are():
     assert not {"T", "A", "K", "B"} & set(others)           # not planned twice
     assert "Lastenvelo 1" in tours and sum(t.startswith("Lastenvelo") for t in tours) <= 3
     assert len(others) + 4 + len(result.unplaced) == 20
+
+
+# --- empty template for users ------------------------------------------------
+
+@pytest.mark.parametrize("lang", ["de", "fr", "en"])
+def test_filled_template_is_recognised(lang):
+    import io as _io
+
+    from openpyxl import load_workbook
+
+    from tour_insertion.stop_import import inspect, stops_template_xlsx
+    wb = load_workbook(_io.BytesIO(stops_template_xlsx(lang)))
+    ws = wb.worksheets[0]
+    assert len(wb.worksheets) == 2                       # stops + instructions
+    ws.append([1, "Praxis A", "Bahnhofstrasse 1", "8001", "Zürich", 3, "Tel. 044"])
+    ws.append([2, "Praxis B", "Seestrasse 5", "8002", "Zürich", 2, ""])
+    out = _io.BytesIO()
+    wb.save(out)
+    guess = inspect(out.getvalue(), "liste.xlsx")["guess"]
+    headers = [c.value for c in ws[1]]
+    assert guess["address"] == [headers[2]] and guess["postcode"] == headers[3]
+    assert guess["city"] == headers[4] and guess["id"] == headers[0]
+    assert guess["name_columns"] == [headers[1]] and guess["quantities"] == [headers[5]]
+    assert guess["info"] == [headers[6]]
