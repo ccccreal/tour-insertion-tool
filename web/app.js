@@ -141,6 +141,30 @@ async function termsFirst() {
   });
 }
 
+// While the server computes: a dimmed page with a spinner, the seconds so
+// far and a request not to close the window. Shown only after a short
+// moment, so quick answers do not flicker. Closing or reloading the tab
+// while it runs asks for confirmation.
+const busyState = { show: null, tick: null, since: 0 };
+function warnLeave(e) { e.preventDefault(); e.returnValue = ""; }
+function busy(on, key) {
+  clearTimeout(busyState.show); clearInterval(busyState.tick);
+  if (!on) {
+    $("busy").hidden = true;
+    window.removeEventListener("beforeunload", warnLeave);
+    return;
+  }
+  busyState.since = Date.now();
+  window.addEventListener("beforeunload", warnLeave);
+  $("busy-title").textContent = t(key);
+  $("busy-time").textContent = "";
+  busyState.show = setTimeout(() => { $("busy").hidden = false; }, 250);
+  busyState.tick = setInterval(() => {
+    const s = Math.round((Date.now() - busyState.since) / 1000);
+    if (s >= 2) $("busy-time").textContent = t("busy_time", { s });
+  }, 1000);
+}
+
 // Two ways to work: plan tours from a list of stops, or add new orders to
 // tours planned the evening before. The page shows only what the mode needs
 // (elements with class only-new / only-insert).
@@ -475,6 +499,7 @@ async function runPlan() {
       form.append("fixed_tours", JSON.stringify(state.tours));
     if (state.mode === "new" && state.draft) form.append("positions", JSON.stringify(handPositions()));
     $("run").disabled = true; $("run").textContent = t("running");
+    busy(true, "running");
     const response = await fetch("api/plan", { method: "POST", body: form });
     const data = await response.json().catch(() => ({ detail: response.statusText }));
     if (!response.ok) { showError(t("error") + "\n" + (data.detail || response.status)); return; }
@@ -482,6 +507,7 @@ async function runPlan() {
   } catch (e) {
     showError(t("error") + "\n" + e);
   } finally {
+    busy(false);
     $("run").disabled = false; modeTexts();
   }
 }
@@ -773,6 +799,7 @@ async function showStops() {
   form.append("settings", JSON.stringify(settings));
   const button = $("show-stops");
   button.disabled = true; button.textContent = t("loading_stops");
+  busy(true, "loading_stops");
   try {
     const response = await fetch("api/stops", { method: "POST", body: form });
     const data = await response.json().catch(() => ({ detail: response.statusText }));
@@ -792,6 +819,7 @@ async function showStops() {
   } catch (e) {
     showError(t("error") + "\n" + e);
   } finally {
+    busy(false);
     button.disabled = false; modeTexts();
   }
 }

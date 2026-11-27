@@ -269,6 +269,12 @@ const TEXT = {
     fr: "{stop} n'entre dans aucune tournée. Il reste en ✕ sur la carte et peut être glissé sur une tournée.",
     en: "{stop} fits no tour. It stays as ✕ on the map and can be dragged onto a tour by hand."
   },
+  busy_hint: {
+    de: "Bitte das Fenster nicht schliessen. Bei vielen neuen Adressen kann das etwas dauern.",
+    fr: "Veuillez ne pas fermer la fenêtre. Avec beaucoup de nouvelles adresses, cela peut prendre un moment.",
+    en: "Please keep this window open. With many new addresses this can take a while."
+  },
+  busy_time: { de: "{s} s", fr: "{s} s", en: "{s} s" },
   // terms of use (only when the server has them configured)
   terms_title: { de: "Nutzungsbedingungen", fr: "Conditions d'utilisation", en: "Terms of use" },
   terms_text: {
