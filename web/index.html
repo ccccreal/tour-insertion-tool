@@ -54,6 +54,8 @@
         </tr></tfoot>
       </table>
       <button type="button" id="add-vehicle" class="small-button" data-i18n="v_add"></button>
+      <label class="check only-new"><input id="vehicle-priority" type="checkbox">
+        <span data-i18n="vehicle_priority"></span></label>
       <p class="small muted" data-i18n="vehicles_help"></p>
 
       <h3 data-i18n="sec_travel"></h3>
@@ -105,7 +107,10 @@
 
       <div id="mapping" class="mapping" hidden></div>
 
-      <button id="run" class="primary" type="button"></button>
+      <div class="run-row">
+        <button id="show-stops" class="secondary only-new" type="button" data-i18n="show_stops"></button>
+        <button id="run" class="primary" type="button"></button>
+      </div>
       <div id="error" class="error" hidden></div>
 
       <div id="metrics" class="metrics" hidden></div>
@@ -116,6 +121,7 @@
         <span class="muted small" data-i18n="drag_hint"></span>
         <button id="undo" type="button" data-i18n="undo" disabled></button>
       </div>
+      <div id="handbar" class="handbar" hidden></div>
       <div id="placing" class="placing-banner" hidden></div>
       <div id="map"></div>
       <div id="open"></div>

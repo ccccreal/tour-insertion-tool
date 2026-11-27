@@ -22,7 +22,9 @@ const state = {
   tours: [], unplaced: [], skipped: [], geocoding: [], changes: [], csv: {},
   deltas: {}, manual: new Set(), placed: new Set(), hidden: new Set(), history: [],
   placing: null,              // {kind: "unplaced"|"skipped", index} while waiting for a map click
-  selected: null              // tour_id shown below the map (null = overview)
+  selected: null,             // tour_id shown below the map (null = overview)
+  draft: null,                // before planning: {stops, start, end, building} (tours by hand)
+  locked: new Set()           // tours planned by hand (kept by the automatic planning)
 };
 let map = null, layer = null, highlight = null, legend = null;
 const markers = new Map();    // stop_id -> marker, to open a popup from the tables
@@ -78,6 +80,7 @@ async function init() {
   initMap();                        // the map is there from the start
   $("profile").addEventListener("change", () => applyProfile($("profile").value));
   $("run").addEventListener("click", runPlan);
+  $("show-stops").addEventListener("click", showStops);
   $("undo").addEventListener("click", undo);
   $("end-at").addEventListener("change", endChanged);
   $("add-vehicle").addEventListener("click", () => $("vehicles").append(vehicleRow("", {})));
@@ -104,7 +107,9 @@ async function init() {
 // (elements with class only-new / only-insert).
 function modeTexts() {
   $("intro").textContent = t(state.mode === "new" ? "intro_new" : "intro");
-  $("run").textContent = t(state.mode === "new" ? "run_new" : "run");
+  const rest = state.mode === "new" && state.draft;
+  $("run").textContent = t(state.mode === "new" ? (rest ? "run_rest" : "run_new") : "run");
+  $("show-stops").textContent = t("show_stops");
 }
 
 function setMode(mode) {
@@ -331,6 +336,7 @@ function applyProfile(name) {
   endChanged();
   $("min-score").value = p.min_score;
   renderVehicles(p.vehicles || {});
+  $("vehicle-priority").checked = !!p.vehicle_priority;
   if (p.depot) $("depot").value = p.depot;
   if (p.day_start !== undefined) $("day-start").value = hhmm(p.day_start);
   if (p.day_end !== undefined && p.day_end !== null) $("day-end").value = hhmm(p.day_end);
@@ -343,11 +349,13 @@ function vehicleRow(name, spec) {
     class: cls, type, value: value ?? "", min: type === "number" ? "0" : null,
     step: cls === "v-speed" ? "0.5" : (type === "number" ? "1" : null) }));
   const remove = h("button", { type: "button", class: "small-button", title: t("v_remove") }, "✕");
+  const up = h("button", { type: "button", class: "small-button", title: t("v_up") }, "▲");
   const count = cell("v-count", spec.count ?? 0, "number");
   count.classList.add("only-new");
   const row = h("tr", {}, cell("v-name", name, "text"), count, cell("v-capacity", spec.capacity, "number"),
-                cell("v-speed", spec.speed_kmh, "number"), h("td", {}, remove));
+                cell("v-speed", spec.speed_kmh, "number"), h("td", { class: "nowrap" }, up, remove));
   remove.addEventListener("click", () => row.remove());
+  up.addEventListener("click", () => { if (row.previousElementSibling) row.parentNode.insertBefore(row, row.previousElementSibling); });
   return row;
 }
 
@@ -378,6 +386,7 @@ function readSettings() {
     optimize: $("optimize").checked,
     min_score: Number($("min-score").value),
     vehicles: readVehicles(),
+    vehicle_priority: $("vehicle-priority").checked,
     depot: $("depot").value.trim(),
     start_at_depot: $("start-at").value === "depot",
     end_mode: $("end-at").value,
@@ -420,14 +429,12 @@ async function runPlan() {
       form.append("tours", tours); form.append("orders", orders);
       if (state.needsMapping && state.inspected) form.append("template", JSON.stringify(currentTemplate()));
     }
-    const settings = readSettings();
-    if (!settings.depot && (settings.start_at_depot || settings.end_mode === "depot")) {
-      showError(t("need_depot")); $("depot").focus(); return;
-    }
-    if (settings.end_mode === "place" && !settings.end_place) {
-      showError(t("need_end_place")); $("end-place").focus(); return;
-    }
+    const settings = checkedSettings();
+    if (!settings) return;
     form.append("settings", JSON.stringify(settings));
+    if (state.mode === "new" && state.draft && state.tours.length)
+      form.append("fixed_tours", JSON.stringify(state.tours));
+    if (state.mode === "new" && state.draft) form.append("positions", JSON.stringify(handPositions()));
     $("run").disabled = true; $("run").textContent = t("running");
     const response = await fetch("api/plan", { method: "POST", body: form });
     const data = await response.json().catch(() => ({ detail: response.statusText }));
@@ -440,8 +447,20 @@ async function runPlan() {
   }
 }
 
+function checkedSettings() {
+  const settings = readSettings();
+  if (!settings.depot && (settings.start_at_depot || settings.end_mode === "depot")) {
+    showError(t("need_depot")); $("depot").focus(); return null;
+  }
+  if (settings.end_mode === "place" && !settings.end_place) {
+    showError(t("need_end_place")); $("end-place").focus(); return null;
+  }
+  return settings;
+}
+
 function setPlan(data) {
   Object.assign(state, {
+    draft: null, locked: new Set(data.locked || []),
     plan: data, settings: data.settings, tours: data.tours, unplaced: data.unplaced,
     skipped: data.skipped, geocoding: data.geocoding, changes: data.changes, csv: data.csv,
     deltas: Object.fromEntries(data.inserted.map(o => [o.order_id, o.delta])),
@@ -473,6 +492,7 @@ function initMap() {
 function fitMap() {
   const points = [];
   state.tours.forEach(tr => tr.stops.forEach(s => points.push([s.lat, s.lon])));
+  if (state.draft) state.draft.stops.forEach(s => points.push([s.lat, s.lon]));
   state.unplaced.forEach(u => { if (u.lat !== null) points.push([u.lat, u.lon]); });
   if (points.length) map.fitBounds(points, { padding: [30, 30] });
 }
@@ -665,7 +685,167 @@ function renderMap() {
     }
     marker.addTo(layer);
   }
+  renderPool();
   renderLegend();
+}
+
+// Before planning: the stops not yet in a tour by hand, as grey dots.
+// While a tour is being built, a click adds the stop to it.
+function renderPool() {
+  if (!state.draft) return;
+  const taken = new Set(state.tours.flatMap(tr => tr.stops.map(s => s.stop_id)));
+  $("map").classList.toggle("building-map", !!state.draft.building);
+  for (const s of state.draft.stops) {
+    if (taken.has(s.stop_id)) continue;
+    const marker = L.marker([s.lat, s.lon], {
+      icon: L.divIcon({ className: "", iconSize: [14, 14], iconAnchor: [7, 7], html: '<div class="pool-icon"></div>' }),
+      title: `${s.name || s.stop_id} – ${s.address}`, zIndexOffset: 800 });
+    marker.on("click", () => {
+      if (state.draft.building) addToHand(s);
+      else marker.bindPopup(`<b>${esc(s.name || s.stop_id)}</b><br>${esc(s.address)}<br>` +
+        `${esc(t("col_items"))}: ${s.items ?? ""}<br><i>${esc(t("pool"))}. ${esc(t("hand_pick_first"))}</i>`).openPopup();
+    });
+    marker.addTo(layer);
+  }
+}
+
+// stops placed by hand on the map before planning keep that position
+function handPositions() {
+  return Object.fromEntries(state.draft.stops.filter(s => state.placed.has(s.stop_id))
+    .map(s => [s.stop_id, [s.lat, s.lon]]));
+}
+
+function isLocked(tourId) { return state.draft ? true : state.locked.has(tourId); }
+
+// --------------------------------------------------------------------------
+// Planning by hand: show the stops, build tours by clicking, then let the
+// automatic planning do the rest without touching these tours
+// --------------------------------------------------------------------------
+
+async function showStops() {
+  showError("");
+  if (!state.file || !state.inspected) { showError(t("need_stops")); return; }
+  if (!currentTemplate().address.length) { showError(t("map_need_address")); return; }
+  const settings = checkedSettings();
+  if (!settings) return;
+  const form = new FormData();
+  form.append("orders", state.file);
+  form.append("template", JSON.stringify(currentTemplate()));
+  form.append("settings", JSON.stringify(settings));
+  const button = $("show-stops");
+  button.disabled = true; button.textContent = t("loading_stops");
+  try {
+    const response = await fetch("api/stops", { method: "POST", body: form });
+    const data = await response.json().catch(() => ({ detail: response.statusText }));
+    if (!response.ok) { showError(t("error") + "\n" + (data.detail || response.status)); return; }
+    Object.assign(state, {
+      plan: { mode: "new", draft: true, n_orders: data.stops.length, inserted: [], changes: [] },
+      settings: data.settings, tours: [], unplaced: data.unplaced, skipped: [],
+      geocoding: data.geocoding, changes: [], csv: data.csv, deltas: {},
+      manual: new Set(), placed: new Set(), hidden: new Set(), history: [], placing: null,
+      selected: null, locked: new Set(),
+      draft: { stops: data.stops, start: data.start, end: data.end, building: null }
+    });
+    $("results").hidden = false;
+    $("metrics").hidden = false;
+    fitMap();
+    render();
+  } catch (e) {
+    showError(t("error") + "\n" + e);
+  } finally {
+    button.disabled = false; modeTexts();
+  }
+}
+
+function renderHandbar() {
+  const bar = $("handbar");
+  if (!state.draft) { bar.hidden = true; bar.replaceChildren(); $("map").classList.remove("building-map"); return; }
+  bar.hidden = false;
+  const d = state.draft;
+  const vehicles = Object.keys(state.settings.vehicles || {});
+  const pick = h("select", { id: "hand-vehicle" }, ...vehicles.map(v => h("option", { value: v }, v)));
+  if (d.lastVehicle) pick.value = d.lastVehicle;
+  const add = h("button", { type: "button", class: "small-button" }, t("hand_new"));
+  add.addEventListener("click", () => newHandTour(pick.value));
+  const rows = [h("div", { class: "row" }, h("b", {}, t("hand_title")), pick, add)];
+  if (d.building) {
+    const undoLast = h("button", { type: "button", class: "small-button" }, t("hand_undo"));
+    undoLast.addEventListener("click", undoHand);
+    const done = h("button", { type: "button", class: "small-button" }, t("hand_done"));
+    done.addEventListener("click", () => { d.building = null; render(); });
+    rows.push(h("div", { class: "row building" }, t("hand_building", { tour: d.building }), undoLast, done));
+  }
+  const chips = state.tours.map((tr, ti) => {
+    const more = h("button", { type: "button", class: "small-button" }, t("hand_continue"));
+    more.addEventListener("click", () => { d.building = tr.tour_id; render(); });
+    const drop = h("button", { type: "button", class: "small-button", title: t("hand_delete") }, "✕");
+    drop.addEventListener("click", () => removeHandTour(tr.tour_id));
+    const n = tr.stops.filter(s => !s.role).length;
+    return h("span", { class: "chip" + (tr.over_capacity || lateIn(tr) ? " bad" : "") },
+      h("span", { class: "dot", style: `background:${colour(ti)}` }),
+      `🔒 ${tr.tour_id} · ${n} · `, h("span", { class: tr.over_capacity ? "late" : null }, loadText(tr)),
+      ` · ${hhmm(tr.end)}`, d.building === tr.tour_id ? null : more, drop);
+  });
+  if (chips.length) rows.push(h("div", { class: "row" }, ...chips));
+  rows.push(h("p", { class: "small muted" }, t("hand_help")));
+  bar.replaceChildren(...rows);
+}
+
+function lateIn(tr) { return tr.stops.some(s => s.late); }
+
+async function newHandTour(vehicle) {
+  if (!vehicle) return;
+  const d = state.draft;
+  let n = 1;
+  while (state.tours.some(tr => tr.tour_id === `${vehicle} ${n}`)) n++;
+  const id = `${vehicle} ${n}`;
+  const stops = [];
+  if (d.start) stops.push({ ...d.start, role: "start", stop_id: `${id} start` });
+  if (d.end) stops.push({ ...d.end, role: "end", stop_id: `${id} end` });
+  state.tours.push({ tour_id: id, vehicle, stops });
+  d.building = id; d.lastVehicle = vehicle;
+  await rescheduleHand();
+}
+
+async function addToHand(stop) {
+  const tr = state.tours.find(x => x.tour_id === state.draft.building);
+  if (!tr) return;
+  const endAt = tr.stops.length && tr.stops[tr.stops.length - 1].role === "end" ? tr.stops.length - 1 : tr.stops.length;
+  tr.stops.splice(endAt, 0, { ...stop });
+  await rescheduleHand();
+}
+
+async function undoHand() {
+  const tr = state.tours.find(x => x.tour_id === state.draft.building);
+  if (!tr) return;
+  const customers = tr.stops.map((s, i) => [s, i]).filter(([s]) => !s.role);
+  if (!customers.length) return;
+  tr.stops.splice(customers[customers.length - 1][1], 1);
+  await rescheduleHand();
+}
+
+async function removeHandTour(id) {
+  state.tours = state.tours.filter(tr => tr.tour_id !== id);
+  if (state.draft.building === id) state.draft.building = null;
+  if (state.selected === id) state.selected = null;
+  await rescheduleHand();
+}
+
+// Times, load and lateness of the tours by hand, after every click
+async function rescheduleHand() {
+  if (!state.tours.length) { render(); return; }
+  try {
+    const response = await fetch("api/schedule", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ settings: state.settings, tours: state.tours })
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail || response.status);
+    state.tours = data.tours;
+  } catch (e) {
+    showError(t("error") + "\n" + e);
+  }
+  render();
 }
 
 function renderLegend() {
@@ -681,7 +861,8 @@ function renderLegend() {
         renderMap();
       });
       box.append(h("label", {}, box_, h("span", { class: "dot", style: `background:${colour(ti)}` }),
-        h("span", {}, `${tour.tour_id} · ${tour.stops.length} · `,
+        h("span", { title: isLocked(tour.tour_id) ? t("locked") : null },
+          `${isLocked(tour.tour_id) ? "🔒 " : ""}${tour.tour_id} · ${tour.stops.filter(s => !s.role).length} · `,
           h("span", { class: tour.over_capacity ? "over" : null }, loadText(tour)),
           ` · ${hhmm(tour.end)}`)));
     });
@@ -820,6 +1001,18 @@ async function placeAt(latlng) {
   if (!state.placing) return;
   const { kind, index } = state.placing;
   stopPlacing();
+  if (state.draft) {                       // before planning: just give it a position
+    const entry = state[kind][index];
+    state.draft.stops.push({ stop_id: entry.order_id, address: entry.address, country: entry.country,
+      lat: Math.round(latlng.lat * 1e6) / 1e6, lon: Math.round(latlng.lng * 1e6) / 1e6,
+      tw_start: entry.tw_start, tw_end: entry.tw_end, service_min: entry.service_min ?? state.settings.service_min,
+      items: entry.items ?? null, kind: entry.kind || "drop", is_new: true, name: entry.name || "",
+      quantities: entry.quantities || {}, info: entry.info || {}, role: "" });
+    state[kind] = state[kind].filter((_, j) => j !== index);
+    state.placed.add(entry.order_id);
+    render();
+    return;
+  }
   const before = snapshot();
   const entry = state[kind][index];
   const lat = Math.round(latlng.lat * 1e6) / 1e6, lon = Math.round(latlng.lng * 1e6) / 1e6;
@@ -887,6 +1080,8 @@ function toast(text) {
 // --------------------------------------------------------------------------
 
 function render() {
+  renderHandbar();
+  modeTexts();
   renderMetrics();
   renderWarnings();
   renderMap();
@@ -901,6 +1096,14 @@ function lateCount() {
 }
 
 function renderMetrics() {
+  if (state.draft) {
+    const assigned = state.tours.reduce((n, tr) => n + tr.stops.filter(s => !s.role).length, 0);
+    const cards = [["m_stops", state.draft.stops.length], ["m_assigned", assigned],
+                   ["m_open", state.draft.stops.length - assigned], ["m_unplaced", state.unplaced.length]];
+    $("metrics").replaceChildren(...cards.map(([key, value]) =>
+      h("div", { class: "metric" }, h("div", { class: "label" }, t(key)), h("div", { class: "value" }, value))));
+    return;
+  }
   const placed = state.tours.reduce((n, tr) => n + tr.stops.filter(s => s.is_new).length, 0);
   const late = lateCount();
   const cards = [["m_tours", state.tours.length],
@@ -970,7 +1173,7 @@ function renderTables() {
   };
   tabs.append(tab(null, t("overview")));
   state.tours.forEach((tr, ti) => tabs.append(
-    tab(tr.tour_id, tr.tour_id, colour(ti))));
+    tab(tr.tour_id, (isLocked(tr.tour_id) ? "🔒 " : "") + tr.tour_id, colour(ti))));
   parts.push(h("h2", {}, t("tours_title")), tabs);
 
   const ti = state.tours.findIndex(tr => tr.tour_id === state.selected);
@@ -1159,6 +1362,7 @@ function download(name, text) {
 }
 
 function renderDownloads() {
+  if (state.draft) { $("downloads").replaceChildren(); return; }
   const files = [["tours_new.csv", state.csv.tours], ["unplaced.csv", state.csv.unplaced]];
   if (state.skipped.length) files.push(["skipped_stops.csv", state.csv.skipped]);
   if (state.geocoding.length) files.push(["geocoding.csv", state.csv.geocoding]);

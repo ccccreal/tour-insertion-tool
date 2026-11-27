@@ -14,6 +14,8 @@ Endpoints (all JSON unless noted):
                                     (file), settings (JSON text), template
                                     (JSON text, optional) -> full result.
                                     Without tours: plan from scratch.
+  POST /api/stops                   form: orders (stop list), settings, template
+                                    -> geocoded stops, start/end, problems
   POST /api/inspect                 form: file -> sheets, columns, preview
                                     and a guessed template (Excel import)
   POST /api/export/{fmt}            {settings, tours, unplaced, lang, tour_id?}
@@ -41,7 +43,7 @@ import os
 import re
 import secrets
 from collections.abc import Callable
-from dataclasses import asdict, fields
+from dataclasses import asdict, fields, replace
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -59,7 +61,8 @@ from tour_insertion.load import load_after, max_load, over_capacity
 from tour_insertion.geocoding import Geocoder
 from tour_insertion.model import Schedule, Stop, Tour
 from tour_insertion.pipeline import (DEFAULT_VEHICLES, InputError, RunResult, Settings,
-                                     apply_vehicles, make_geocoder, plan_new, run)
+                                     apply_vehicles, make_geocoder, plan_new, prepare_stops,
+                                     run)
 from tour_insertion.stop_import import REASON_NO_ADDRESS, Template, inspect
 from tour_insertion.stop_import import order_rows as import_rows
 from tour_insertion.planner import Unplaced, insert_orders
@@ -166,6 +169,31 @@ def tours_from_json(data: list | None, settings: Settings
     return tours, moved, model, models
 
 
+def stop_json(stop: Stop) -> dict:
+    """A stop without times (see schedule_json for a stop in a tour)."""
+    return {
+        "stop_id": stop.stop_id, "address": stop.address,
+        "country": stop.country, "lat": stop.lat, "lon": stop.lon,
+        "tw_start": stop.tw_start, "tw_end": stop.tw_end,
+        "service_min": stop.service_min, "is_new": stop.is_new,
+        "items": stop.items, "kind": stop.kind,
+        "name": stop.name, "quantities": dict(stop.quantities), "role": stop.role,
+        "info": dict(stop.info),
+    }
+
+
+def fixed_tours_from_json(data: list | None) -> dict[str, Tour]:
+    """Tours planned by hand in the page: customer stops in order + vehicle."""
+    tours = {}
+    for t in data or []:
+        tour_id = str(t.get("tour_id") or "").strip()
+        if not tour_id or tour_id in tours:
+            raise InputError(f"tours planned by hand need unique names, got {tour_id!r}")
+        stops = tuple(stop_from_json(d) for d in t.get("stops") or [] if not d.get("role"))
+        tours[tour_id] = Tour(tour_id, stops, vehicle=str(t.get("vehicle") or ""))
+    return tours
+
+
 def schedule_json(s: Schedule, tolerance_min: int,
                   moved: frozenset[str] = frozenset()) -> dict:
     late = late_stops(s, tolerance_min)
@@ -183,13 +211,7 @@ def schedule_json(s: Schedule, tolerance_min: int,
         "end": s.end,
         "duration": s.duration,
         "stops": [{
-            "stop_id": t.stop.stop_id, "address": t.stop.address,
-            "country": t.stop.country, "lat": t.stop.lat, "lon": t.stop.lon,
-            "tw_start": t.stop.tw_start, "tw_end": t.stop.tw_end,
-            "service_min": t.stop.service_min, "is_new": t.stop.is_new,
-            "items": t.stop.items, "kind": t.stop.kind, "load": load,
-            "name": t.stop.name, "quantities": dict(t.stop.quantities), "role": t.stop.role,
-            "info": dict(t.stop.info),
+            **stop_json(t.stop), "load": load,
             "arrival": t.arrival, "departure": t.departure,
             "arrival_hhmm": format_time(t.arrival), "slack": t.slack,
             "late": t.stop.stop_id in late, "moved": t.stop.stop_id in moved,
@@ -380,34 +402,78 @@ def create_app(geocoder_factory: Callable[[Settings], Geocoder] | None = None) -
             raise InputError(f"{upload.filename}: not UTF-8 text. Save the CSV as "
                              "UTF-8 and try again.") from error
 
+    def with_positions(rows, no_address, positions: str):
+        """Stops placed by hand on the map: {order_id: [lat, lon]}."""
+        try:
+            known = json.loads(positions) if positions.strip() else {}
+            known = {str(k): (float(v[0]), float(v[1])) for k, v in known.items()}
+        except (json.JSONDecodeError, TypeError, ValueError, IndexError) as error:
+            raise InputError(f"bad positions: {error}") from error
+        for row in rows + list(no_address):
+            if row.get("order_id") in known:
+                row["lat"], row["lon"] = (str(x) for x in known[row["order_id"]])
+                row["address"] = row.get("address") or "–"
+        return (rows + [r for r in no_address if r.get("order_id") in known],
+                [r for r in no_address if r.get("order_id") not in known])
+
+    async def order_rows_of(orders: UploadFile, spec: Template | None):
+        name = orders.filename or "orders"
+        if spec is not None:
+            try:
+                return import_rows(await read_bytes(orders), name, spec)
+            except ValueError as error:
+                raise InputError(str(error)) from error
+        if name.lower().endswith((".xlsx", ".xlsm", ".xls")):
+            raise InputError(f"{name}: for an Excel file, set up the columns first")
+        return read_rows_text(await read_upload(orders), name), []
+
+    @app.post("/api/stops")
+    async def show_stops(orders: UploadFile = File(...), settings: str = Form("{}"),
+                         template: str = Form("")):
+        """Geocode a stop list, nothing planned yet: to show the stops on the
+        map and plan tours by hand."""
+        try:
+            s = settings_from_json(json.loads(settings))
+            spec = Template.from_json(json.loads(template)) if template.strip() else None
+        except (json.JSONDecodeError, ValueError) as error:
+            raise InputError(f"bad settings or template: {error}") from error
+        rows, no_address = await order_rows_of(orders, spec)
+        p = await run_in_threadpool(prepare_stops, rows, s, get_geocoder(s), no_address)
+        return {"settings": asdict(s), "stops": [stop_json(o) for o in p.orders],
+                # start and end as the planning will use them (times included)
+                "start": stop_json(replace(p.start, role="start", tw_start=s.day_start,
+                                           tw_end=None, service_min=0)) if p.start else None,
+                "end": stop_json(replace(p.end, role="end", tw_start=None, tw_end=s.day_end,
+                                         service_min=0)) if p.end else None,
+                "unplaced": [unplaced_json(u) for u in p.unplaced],
+                "geocoding": [asdict(g) for g in p.geocoding],
+                "csv": {"geocoding": geocoding_to_csv(p.geocoding)}}
+
     @app.post("/api/plan")
     async def plan(orders: UploadFile = File(...), tours: UploadFile | None = File(None),
-                   settings: str = Form("{}"), template: str = Form("")):
+                   settings: str = Form("{}"), template: str = Form(""),
+                   fixed_tours: str = Form(""), positions: str = Form("")):
         """With tours: insert the orders. Without: plan tours from scratch.
         With a template the orders file may have any layout (Excel)."""
         try:
             s = settings_from_json(json.loads(settings))
             spec = Template.from_json(json.loads(template)) if template.strip() else None
+            fixed = fixed_tours_from_json(json.loads(fixed_tours)) if fixed_tours.strip() else {}
         except json.JSONDecodeError as error:
             raise InputError(f"bad settings or template: {error}") from error
         except ValueError as error:
             raise InputError(f"bad template: {error}") from error
         name = orders.filename or "orders"
-        if spec is not None:
-            try:
-                rows, no_address = import_rows(await read_bytes(orders), name, spec)
-            except ValueError as error:
-                raise InputError(str(error)) from error
-        else:
-            if name.lower().endswith((".xlsx", ".xlsm", ".xls")):
-                raise InputError(f"{name}: for an Excel file, set up the columns first")
-            rows, no_address = read_rows_text(await read_upload(orders), name), []
+        rows, no_address = await order_rows_of(orders, spec)
+        rows, no_address = with_positions(rows, no_address, positions)
         # Planning (and geocoding many addresses) can take a while: run it in
         # a worker thread, so the server keeps answering other requests
         # (the page itself, other users) in the meantime.
         if tours is None or not tours.filename:
-            result = await run_in_threadpool(plan_new, rows, s, get_geocoder(s), no_address)
-            return result_json(result, s, "new")
+            result = await run_in_threadpool(plan_new, rows, s, get_geocoder(s), no_address, fixed)
+            out = result_json(result, s, "new")
+            out["locked"] = list(fixed)
+            return out
         tour_rows = read_rows_text(await read_upload(tours), tours.filename or "tours")
         result = await run_in_threadpool(run, tour_rows, rows, s, get_geocoder(s))
         result.unplaced = [unplaced_from_row(r, "order_id", REASON_NO_ADDRESS, s.service_min)

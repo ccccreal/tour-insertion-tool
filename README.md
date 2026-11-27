@@ -168,6 +168,27 @@ left out. Without a return time, the cheapest plan is usually ONE long tour
 of the fastest vehicle: set "back by" to spread the stops. A real vehicle
 routing solver (e.g. OR-Tools) would find better plans for many stops.
 
+### Tours by hand, then the rest automatically
+
+Dispatchers often know at a glance which stops belong together. In the web
+page (plan tours):
+
+1. **Show stops on the map**: the list is geocoded and shown as grey dots;
+   addresses not found appear right away.
+2. **Tours by hand**: choose a vehicle, *New tour*, then click the stops in
+   the order you want. Times, load and the latest end are recomputed after
+   every click; a tour that is too full or too long turns red but is
+   allowed. *Remove last stop*, *Done*, *continue*, *dissolve*.
+3. **Plan the remaining stops**: the automatic planning uses the remaining
+   vehicles for the remaining stops and does not change the tours by hand
+   at all (🔒). Afterwards everything, those tours included, can be
+   changed by drag & drop.
+
+**Vehicles in order** (checkbox under the vehicle table): the vehicle types
+are used one after the other in the order of the table (▲ moves a type up),
+e.g. cargo bikes first; cars only get what the bikes cannot take. Without
+it the planning looks for the least total time over all vehicles.
+
 ## Vehicles and capacity
 
 A tour's `vehicle` names a vehicle type. Each type has a capacity (most

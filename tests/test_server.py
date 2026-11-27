@@ -278,3 +278,31 @@ def test_open_start_and_end_place(client):
     assert client.get("/api/example-depots").json()["winterthur"] == "47.5000, 8.7236"
     bad = plan(client, tours, orders, {"end_mode": "somewhere"})
     assert bad.status_code == 400
+
+
+def test_show_stops_then_plan_rest_with_a_tour_by_hand(zurich_client):
+    data = zurich_client.get("/api/plan-examples/standorte/stops").content
+    template = json.dumps(zurich_client.get("/api/plan-examples/standorte/template").json())
+    settings = {"depot": "47.3779, 8.5403", "day_end": 660, "vehicle_priority": True,
+                "vehicles": {"Lastenvelo": {"capacity": 10, "speed_kmh": 15, "count": 3},
+                             "Auto": {"capacity": 40, "speed_kmh": 20, "count": 1}}}
+    form = {"settings": json.dumps(settings), "template": template}
+    shown = zurich_client.post("/api/stops", files={"orders": ("s.xlsx", data)}, data=form).json()
+    assert len(shown["stops"]) == 20 and shown["start"]["lat"] == 47.3779
+    by_id = {s["stop_id"]: s for s in shown["stops"]}
+    # a tour by hand, scheduled live like in the page
+    hand = {"tour_id": "Lastenvelo 1", "vehicle": "Lastenvelo",
+            "stops": [dict(shown["start"], role="start"), by_id["C"], by_id["A"],
+                      dict(shown["end"], role="end")]}
+    live = zurich_client.post("/api/schedule", json={"settings": shown["settings"],
+                                                     "tours": [hand]}).json()
+    assert [s["stop_id"] for s in live["tours"][0]["stops"]][1:3] == ["C", "A"]
+    assert live["tours"][0]["stops"][0]["arrival"] == 480          # starts at 08:00
+    body = zurich_client.post("/api/plan", files={"orders": ("s.xlsx", data)},
+                              data={**form, "fixed_tours": json.dumps([hand])}).json()
+    assert body["locked"] == ["Lastenvelo 1"]
+    tours = {t["tour_id"]: t for t in body["tours"]}
+    kept = [s["stop_id"] for s in tours["Lastenvelo 1"]["stops"] if not s["role"]]
+    assert kept == ["C", "A"]
+    assert all(s["stop_id"] not in ("C", "A") for t, tour in tours.items() if t != "Lastenvelo 1"
+               for s in tour["stops"])

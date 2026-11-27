@@ -12,7 +12,8 @@ import pytest
 from tour_insertion.cli import main
 from tour_insertion.geocoding import OK, GeocodeResult
 from tour_insertion.load import max_load
-from tour_insertion.pipeline import InputError, Settings, plan_new
+from tour_insertion.model import Tour
+from tour_insertion.pipeline import InputError, Settings, customers, plan_new, prepare_stops
 from tour_insertion.stop_import import Template, inspect, order_rows
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
@@ -128,3 +129,37 @@ def test_cli_plans_from_an_excel_file(tmp_path):
         unplaced = list(csv.DictReader(f))
     new_stops = [r for r in rows if r["is_new"] == "1"]
     assert len(new_stops) + len(unplaced) == 141
+
+
+def test_vehicle_priority_fills_bikes_first():
+    rows, missing = order_rows(stops("standorte"), "stops.xlsx", template("standorte"))
+    vehicles = {"Lastenvelo": {"capacity": 10, "speed_kmh": 15, "count": 4},
+                "Auto": {"capacity": 40, "speed_kmh": 20, "count": 1}}
+    plain = plan_new(rows, Settings(depot="47.3779, 8.5403", vehicles=vehicles), FakeGeocoder())
+    bikes = plan_new(rows, Settings(depot="47.3779, 8.5403", vehicles=vehicles,
+                                    vehicle_priority=True), FakeGeocoder())
+    items = lambda r, v: sum(s.items or 0 for sc in r.schedules if sc.tour.vehicle == v
+                             for s in sc.tour.stops)
+    assert items(bikes, "Lastenvelo") == 40            # all 4 bikes full first
+    assert items(bikes, "Lastenvelo") > items(plain, "Lastenvelo")
+    placed = sum(len(customers(sc.tour)) for sc in bikes.schedules)
+    assert placed + len(bikes.unplaced) == 20
+
+
+def test_tours_planned_by_hand_stay_as_they_are():
+    rows, missing = order_rows(stops("standorte"), "stops.xlsx", template("standorte"))
+    prepared = prepare_stops(rows, plan_settings(), FakeGeocoder())
+    by_id = {o.stop_id: o for o in prepared.orders}
+    # by hand: an over-full bike tour in a deliberately odd order
+    hand = Tour("Lastenvelo 1", tuple(by_id[i] for i in ("T", "A", "K", "B")),
+                vehicle="Lastenvelo")
+    result = plan_new(rows, plan_settings(), FakeGeocoder(), fixed={"Lastenvelo 1": hand})
+    tours = {sc.tour.tour_id: sc for sc in result.schedules}
+    kept = tours["Lastenvelo 1"].tour
+    assert [s.stop_id for s in customers(kept)] == ["T", "A", "K", "B"]
+    assert kept.stops[0].role == "start" and kept.stops[-1].role == "end"
+    others = [s.stop_id for t, sc in tours.items() if t != "Lastenvelo 1"
+              for s in customers(sc.tour)]
+    assert not {"T", "A", "K", "B"} & set(others)           # not planned twice
+    assert "Lastenvelo 1" in tours and sum(t.startswith("Lastenvelo") for t in tours) <= 3
+    assert len(others) + 4 + len(result.unplaced) == 20

@@ -44,7 +44,7 @@ from tour_insertion.geocoding import (NOT_FOUND, FranceGeocoder,
                                       fill_coordinates, needs_geocoding)
 from tour_insertion.model import InsertionOption, Schedule, Stop, Tour
 from tour_insertion.optimize import improve_tour, moved_stops
-from tour_insertion.planner import Unplaced, insert_orders
+from tour_insertion.planner import REASON_NO_TOURS, Unplaced, insert_orders
 from tour_insertion.schedule import forward_pass
 from tour_insertion.traveltime import CachedModel, CrowFlyModel, TravelModel
 
@@ -71,6 +71,7 @@ class Settings:
     tolerance_min: int = 0
     min_score: float = 0.5
     optimize: bool = False
+    vehicle_priority: bool = False      # plan_new: vehicle types in table order
     # Vehicle types: name -> {"capacity": items, "speed_kmh": km/h}. A tour
     # gets its type from the 'vehicle' column. Missing capacity = no limit,
     # missing speed = speed_m_per_min. Tours without a vehicle: no limit.
@@ -325,20 +326,21 @@ def cap_window(stop: Stop, settings: Settings) -> Stop:
     return replace(stop, tw_end=settings.day_end)
 
 
-def empty_tours(start: Stop | None, end: Stop | None, settings: Settings) -> dict[str, Tour]:
-    """One empty tour per vehicle ("Lastenvelo 1", "Lastenvelo 2", ...)."""
+def empty_tours(start: Stop | None, end: Stop | None, settings: Settings,
+                taken: Mapping[str, int] | None = None) -> dict[str, Tour]:
+    """One empty tour per available vehicle. `taken`: vehicles per type
+    already used by tours planned by hand. Ids are temporary ("Lastenvelo
+    #1"); plan_new gives the used tours their final names."""
+    taken = taken or {}
     tours = {}
     for name, spec in settings.vehicles.items():
         try:
             count = int((spec or {}).get("count") or 0)
         except (TypeError, ValueError) as error:
             raise InputError(f"vehicle {name!r}: count must be a whole number") from error
-        for i in range(1, count + 1):
-            tour_id = f"{name} {i}"
+        for i in range(1, max(0, count - taken.get(name, 0)) + 1):
+            tour_id = f"{name} #{i}"
             tours[tour_id] = frame_tour(Tour(tour_id, (), vehicle=name), settings, start, end)
-    if not tours:
-        raise InputError("planning without tours needs at least one vehicle "
-                         "(set how many of each type are available)")
     return tours
 
 
@@ -346,16 +348,20 @@ def customers(tour: Tour) -> list[Stop]:
     return [s for s in tour.stops if not s.role]
 
 
-def plan_new(order_rows: list[dict], settings: Settings, geocoder: Geocoder | None = None,
-             no_address: list[dict] = ()) -> RunResult:
-    """Plan tours from scratch: every vehicle starts with an empty tour
-    (depot -> depot), all stops are inserted with the same cheapest
-    insertion as for overnight orders, then every tour is improved.
+@dataclass
+class PreparedStops:
+    """A stop list made ready for planning (geocoded, checked)."""
+    start: Stop | None
+    end: Stop | None
+    orders: list[Stop]
+    unplaced: list[Unplaced]
+    geocoding: list[GeocodeResult]
 
-    Tours are filled as long as time (day_end) and capacity allow; vehicles
-    that get no stop are left out. This is a simple heuristic, not an
-    optimal plan (see README).
-    """
+
+def prepare_stops(order_rows: list[dict], settings: Settings, geocoder: Geocoder | None = None,
+                  no_address: list[dict] = ()) -> PreparedStops:
+    """Geocode a stop list and the start/end places. Used to show the stops
+    on the map before planning, and by plan_new."""
     geocoder = geocoder or make_geocoder(settings)
     start, end, end_results = tour_ends(settings, geocoder)
     try:
@@ -369,33 +375,92 @@ def plan_new(order_rows: list[dict], settings: Settings, geocoder: Geocoder | No
         raise InputError(str(error)) from error
     missing = [unplaced_from_row(r, "order_id", "address_missing", settings.service_min)
                for r in no_address]
-
     orders = [cap_window(o, settings) for o in orders]
-    tours, model, models = apply_vehicles(empty_tours(start, end, settings), settings)
+    return PreparedStops(start, end, orders, missing + geo_unplaced, end_results + geo_results)
+
+
+def plan_new(order_rows: list[dict], settings: Settings, geocoder: Geocoder | None = None,
+             no_address: list[dict] = (), fixed: Mapping[str, Tour] | None = None) -> RunResult:
+    """Plan tours from scratch: every vehicle starts with an empty tour
+    (start -> end), all stops are inserted with the same cheapest insertion
+    as for overnight orders, then every tour is improved.
+
+    fixed     tours planned by hand (customer stops in the given order,
+              vehicle set). They are kept exactly as they are: nothing is
+              added, removed or reordered. Their stops are not planned
+              again, and their vehicles are not available any more.
+    settings.vehicle_priority
+              False: one run over all vehicles (least total time).
+              True: vehicle types one after the other in the order of
+              settings.vehicles (e.g. cargo bikes first); the next type
+              only gets what the previous ones could not take.
+
+    Tours are filled as long as time (day_end) and capacity allow; vehicles
+    that get no stop are left out. This is a simple heuristic, not an
+    optimal plan (see README).
+    """
+    prepared = prepare_stops(order_rows, settings, geocoder, no_address)
+    start, end = prepared.start, prepared.end
+    fixed = {t: frame_tour(tour, settings, start, end) for t, tour in (fixed or {}).items()}
+    fixed_ids = {s.stop_id for tour in fixed.values() for s in customers(tour)}
+    orders = [o for o in prepared.orders if o.stop_id not in fixed_ids]
+    taken = defaultdict(int)
+    for tour in fixed.values():
+        taken[tour.vehicle] += 1
+
+    empty = empty_tours(start, end, settings, taken)
+    if not empty and not fixed:
+        raise InputError("planning without tours needs at least one vehicle "
+                         "(set how many of each type are available)")
+    everything, model, models = apply_vehicles({**fixed, **empty}, settings)
     model = CachedModel(model)
     models = {t: CachedModel(m) for t, m in models.items()}
     options = settings.insertion_options
-    try:
-        result = insert_orders(tours, orders, model, models=models, **options)
-    except ValueError as error:
-        raise InputError(str(error)) from error
+    auto = {t: everything[t] for t in empty}
+
+    # one run over all vehicles, or one run per vehicle type in order
+    if settings.vehicle_priority:
+        groups = [[t for t, tour in auto.items() if tour.vehicle == name]
+                  for name in settings.vehicles]
+        groups = [g for g in groups if g]
+    else:
+        groups = [list(auto)] if auto else []
+    pending, inserted, unplaced = orders, [], []
+    filled: dict[str, Tour] = {}
+    for group in groups:
+        try:
+            result = insert_orders({t: auto[t] for t in group}, pending, model,
+                                   models=models, **options)
+        except ValueError as error:
+            raise InputError(str(error)) from error
+        filled.update(result.tours)
+        inserted += result.inserted
+        pending = [u.stop for u in result.unplaced]
+        unplaced = result.unplaced
+    if not groups:
+        unplaced = [Unplaced.from_stop(o, REASON_NO_TOURS) for o in orders]
+
     used = {t: improve_tour(tour, models.get(t, model), **options)
-            for t, tour in result.tours.items() if customers(tour)}
-    # number the used vehicles 1, 2, 3 per type (no gaps for unused ones)
-    final, new_models, seen = {}, {}, defaultdict(int)
+            for t, tour in filled.items() if customers(tour)}
+    # final names: "Lastenvelo 1", "Lastenvelo 2", ... skipping names of
+    # the tours planned by hand
+    final = {t: everything[t] for t in fixed}
+    final_models = {t: models[t] for t in fixed if t in models}
+    renamed = {}
     for old_id, tour in used.items():
-        seen[tour.vehicle] += 1
-        new_id = f"{tour.vehicle} {seen[tour.vehicle]}"
+        n = 1
+        while f"{tour.vehicle} {n}" in final:
+            n += 1
+        new_id = f"{tour.vehicle} {n}"
         stops = tuple(replace(s, stop_id=f"{new_id} {s.role}") if s.role else s
                       for s in tour.stops)
         final[new_id] = replace(tour, tour_id=new_id, stops=stops)
-        if old_id in models:
-            new_models[new_id] = models[old_id]
-    schedules = [forward_pass(final[t], new_models.get(t, model)) for t in final]
-    renamed = {o.tour_id: o.tour_id for o in result.inserted}
-    for (old_id, tour), new_id in zip(used.items(), final):
         renamed[old_id] = new_id
-    inserted = [replace(o, tour_id=renamed[o.tour_id]) for o in result.inserted]
-    return RunResult(final, orders, inserted,
-                     missing + geo_unplaced + result.unplaced, schedules,
-                     end_results + geo_results)
+        if old_id in models:
+            final_models[new_id] = models[old_id]
+    schedules = [forward_pass(final[t], final_models.get(t, model)) for t in final]
+    inserted = [replace(o, tour_id=renamed.get(o.tour_id, o.tour_id)) for o in inserted
+                if o.tour_id in renamed]
+    problems = [u for u in prepared.unplaced if u.order_id not in fixed_ids]
+    return RunResult(final, orders, inserted, problems + unplaced, schedules,
+                     prepared.geocoding)
